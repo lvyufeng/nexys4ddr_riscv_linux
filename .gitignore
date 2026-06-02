@@ -36,3 +36,7 @@ __pycache__/
 *.swo
 .vscode/
 .idea/
+
+# Local tool/bootstrap workspaces
+third_party/
+.venv/
