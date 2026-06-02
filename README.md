@@ -81,7 +81,19 @@ tools/              Helper tools
 
 ## Initial commands
 
-This repository is currently a skeleton. The first implementation milestone is to add the reference SoC build flow and a minimal Linux boot flow.
+The Stage 1 reference path uses LiteX's upstream Nexys4 DDR target to prove board, DDR, UART, and metadata generation before moving to Linux firmware/kernel work.
+
+```bash
+./scripts/bootstrap_litex.sh
+./scripts/check_toolchain.sh
+./scripts/probe_litex_nexys4ddr.sh
+./scripts/build_litex_nexys4ddr.sh
+./scripts/program_litex_nexys4ddr.sh   # optional, requires connected board
+```
+
+The probe should generate `build/litex_nexys4ddr_probe/` with `csr.json`, `csr.csv`, `memory.x`, and gateware source/TCL/XDC files. Full bitstream/BIOS build requires Vivado plus a RISC-V cross compiler. The build script automatically adds Vivado 2025.2's bundled `riscv64-unknown-elf-gcc` path when present.
+
+Current Stage 1 status: the minimal LiteX Nexys4 DDR bitstream builds, routed timing is met, the board programs successfully, and the BIOS UART prompt responds as `litex>`.
 
 Vivado environment example:
 

@@ -5,8 +5,9 @@ Local status checked during Stage 0:
 ```text
 Python 3.10.10: available
 Vivado 2025.2: available
-LiteX / Migen / LiteDRAM: not installed yet
-RISC-V cross compiler: not found in PATH yet
+LiteX / Migen / LiteDRAM: installed locally by `scripts/bootstrap_litex.sh`
+LiteX board target: `litex_boards.targets.digilent_nexys4ddr` probe succeeds
+RISC-V cross compiler: Vivado-bundled `riscv64-unknown-elf-gcc` found at `/mnt/data1/Xilinx/2025.2/gnu/riscv/lin/bin`
 OpenSBI source/toolchain: not installed yet
 Buildroot source/config: not installed yet
 ```
@@ -28,15 +29,21 @@ Rationale:
 
 - Vivado 2025.2
 - Python virtual environment
+- Meson/Ninja for LiteX generated software builds
+- pyserial for UART smoke tests
 - LiteX
 - Migen
 - LiteDRAM
-- LiteEth / LiteScope optional later
+- LiteEth, required by the upstream Nexys4 DDR target import path
+- LiteSDCard, required for the target's optional SDCard support
 - LiteX boards
+- `pythondata-cpu-vexriscv`
+- `pythondata-software-picolibc`
+- `pythondata-software-compiler_rt`
 
 ### Firmware and Linux
 
-- RISC-V GCC toolchain, preferably `riscv64-unknown-elf-gcc` for firmware/OpenSBI and/or a Linux-capable cross toolchain from Buildroot.
+- RISC-V GCC toolchain. Vivado 2025.2 provides `riscv64-unknown-elf-gcc` under `/mnt/data1/Xilinx/2025.2/gnu/riscv/lin/bin`, which is enough to start LiteX BIOS/firmware builds. A Linux-capable cross toolchain from Buildroot will still be needed for the kernel/rootfs path.
 - OpenSBI source tree.
 - Linux kernel source tree.
 - Buildroot source tree.
@@ -47,10 +54,15 @@ Do not vendor large upstream repositories into the main git history unless neede
 
 ```text
 third_party/
-  litex/
   migen/
+  litex/
   litedram/
+  liteeth/
+  litesdcard/
   litex-boards/
+  pythondata-cpu-vexriscv/
+  pythondata-software-picolibc/
+  pythondata-software-compiler_rt/
   opensbi/
   linux/
   buildroot/
@@ -64,14 +76,18 @@ The first bootstrap script should:
 
 1. create a Python virtual environment under `.venv/`;
 2. clone/install LiteX dependencies into `third_party/`;
-3. verify `litex-boards` can see a Nexys4 DDR/Nexys A7-compatible target;
-4. separately fetch/build OpenSBI/Linux/Buildroot once the reference SoC target is known.
+3. recursively initialize upstream submodules such as `pythondata-software-picolibc/data`;
+4. verify `litex-boards` can see a Nexys4 DDR/Nexys A7-compatible target;
+5. separately fetch/build OpenSBI/Linux/Buildroot once the reference SoC target is known.
 
 ## Verification commands
 
 ```bash
 python3 --version
 vivado -version
-python3 -c 'import litex, migen, litedram; print("litex ok")'
+./scripts/bootstrap_litex.sh
+./scripts/check_toolchain.sh
+./scripts/probe_litex_nexys4ddr.sh
+./scripts/build_litex_nexys4ddr.sh
 riscv64-unknown-elf-gcc --version
 ```
