@@ -20,7 +20,7 @@ fi
 
 echo "== Python packages =="
 "$VENV_PY" - <<'PY'
-mods = ["serial", "mesonbuild", "migen", "litex", "litedram", "liteeth", "litesdcard", "litex_boards", "pythondata_cpu_vexriscv", "pythondata_software_picolibc", "pythondata_software_compiler_rt"]
+mods = ["serial", "mesonbuild", "migen", "litex", "litedram", "liteeth", "litesdcard", "litex_boards", "pythondata_cpu_vexriscv", "pythondata_cpu_vexriscv_smp", "pythondata_software_picolibc", "pythondata_software_compiler_rt"]
 for mod in mods:
     try:
         m = __import__(mod)

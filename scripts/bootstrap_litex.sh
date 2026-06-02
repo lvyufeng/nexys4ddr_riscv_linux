@@ -32,6 +32,7 @@ clone_or_update https://github.com/enjoy-digital/liteeth.git "$THIRD_PARTY/litee
 clone_or_update https://github.com/enjoy-digital/litesdcard.git "$THIRD_PARTY/litesdcard"
 clone_or_update https://github.com/litex-hub/litex-boards.git "$THIRD_PARTY/litex-boards"
 clone_or_update https://github.com/litex-hub/pythondata-cpu-vexriscv.git "$THIRD_PARTY/pythondata-cpu-vexriscv"
+clone_or_update https://github.com/litex-hub/pythondata-cpu-vexriscv_smp.git "$THIRD_PARTY/pythondata-cpu-vexriscv_smp"
 clone_or_update https://github.com/litex-hub/pythondata-software-picolibc.git "$THIRD_PARTY/pythondata-software-picolibc"
 clone_or_update https://github.com/litex-hub/pythondata-software-compiler_rt.git "$THIRD_PARTY/pythondata-software-compiler_rt"
 
@@ -42,11 +43,12 @@ python3 -m pip install -e "$THIRD_PARTY/liteeth"
 python3 -m pip install -e "$THIRD_PARTY/litesdcard"
 python3 -m pip install -e "$THIRD_PARTY/litex-boards"
 python3 -m pip install -e "$THIRD_PARTY/pythondata-cpu-vexriscv"
+python3 -m pip install -e "$THIRD_PARTY/pythondata-cpu-vexriscv_smp"
 python3 -m pip install -e "$THIRD_PARTY/pythondata-software-picolibc"
 python3 -m pip install -e "$THIRD_PARTY/pythondata-software-compiler_rt"
 
 python3 - <<'PY'
-import migen, litex, litedram, liteeth, litesdcard, litex_boards, pythondata_cpu_vexriscv, pythondata_software_picolibc, pythondata_software_compiler_rt
+import migen, litex, litedram, liteeth, litesdcard, litex_boards, pythondata_cpu_vexriscv, pythondata_cpu_vexriscv_smp, pythondata_software_picolibc, pythondata_software_compiler_rt
 print("LiteX Python packages installed")
 print("migen:", migen.__file__)
 print("litex:", litex.__file__)
@@ -55,6 +57,7 @@ print("liteeth:", liteeth.__file__)
 print("litesdcard:", litesdcard.__file__)
 print("litex_boards:", litex_boards.__file__)
 print("pythondata_cpu_vexriscv:", pythondata_cpu_vexriscv.__file__)
+print("pythondata_cpu_vexriscv_smp:", pythondata_cpu_vexriscv_smp.__file__)
 print("pythondata_software_picolibc:", pythondata_software_picolibc.__file__)
 print("pythondata_software_compiler_rt:", pythondata_software_compiler_rt.__file__)
 PY

@@ -50,3 +50,32 @@ If Linux does not boot:
 6. Confirm timer interrupt path.
 7. Confirm PLIC external interrupt wiring.
 8. Confirm kernel is built for the same ISA/ABI as the CPU.
+
+
+## Current LiteX reference Linux metadata
+
+The LiteX/VexRiscvSMP Linux probe now generates the Linux-facing device tree metadata:
+
+```bash
+./scripts/probe_litex_nexys4ddr_linux.sh
+```
+
+Reference DTS:
+
+```text
+linux/dts/litex_nexys4ddr_vexriscv_smp.dts
+```
+
+Confirmed generated platform properties:
+
+```text
+CPU:        VexRiscv SMP-LINUX, RV32IMA
+MMU:        Sv32
+DDR:        0x40000000, 128 MiB
+OpenSBI:    0x40f00000, 512 KiB reserved-memory
+UART:       LiteUART at 0xf0001000
+CLINT:      0xf0010000
+PLIC:       0xf0c00000
+```
+
+The next boot-flow step is to build OpenSBI/Linux/rootfs artifacts matching this generated DTS instead of the draft custom memory map.

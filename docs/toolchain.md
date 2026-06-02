@@ -38,6 +38,7 @@ Rationale:
 - LiteSDCard, required for the target's optional SDCard support
 - LiteX boards
 - `pythondata-cpu-vexriscv`
+- `pythondata-cpu-vexriscv_smp` for Linux/OpenSBI-oriented VexRiscvSMP builds
 - `pythondata-software-picolibc`
 - `pythondata-software-compiler_rt`
 
@@ -61,6 +62,7 @@ third_party/
   litesdcard/
   litex-boards/
   pythondata-cpu-vexriscv/
+  pythondata-cpu-vexriscv_smp/
   pythondata-software-picolibc/
   pythondata-software-compiler_rt/
   opensbi/

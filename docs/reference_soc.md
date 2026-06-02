@@ -45,8 +45,9 @@ A reference SoC isolates board/DDR/Linux-flow problems from custom CPU bugs.
 3. Install or point `PATH` at a RISC-V cross compiler so LiteX can build BIOS/software.
 4. Build a minimal LiteX SoC bitstream with UART and DDR. **Done:** `build/litex_nexys4ddr/gateware/digilent_nexys4ddr.bit` builds and meets timing.
 5. Program the board and verify the LiteX BIOS UART prompt. **Done:** `LITEX_PROGRAMMED=xc7a100t_0`, `LITEX_UART_SMOKE_OK`.
-6. Add Linux-capable CPU config and OpenSBI/Linux artifacts.
-7. Capture UART Linux boot logs.
+6. Generate Linux-capable VexRiscvSMP metadata/DTS. **Done:** `scripts/probe_litex_nexys4ddr_linux.sh` and `linux/dts/litex_nexys4ddr_vexriscv_smp.dts`.
+7. Add OpenSBI/Linux/rootfs artifacts matching the generated LiteX DTS.
+8. Capture UART Linux boot logs.
 
 ## Probe result
 

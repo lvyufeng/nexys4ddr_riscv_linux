@@ -87,6 +87,7 @@ The Stage 1 reference path uses LiteX's upstream Nexys4 DDR target to prove boar
 ./scripts/bootstrap_litex.sh
 ./scripts/check_toolchain.sh
 ./scripts/probe_litex_nexys4ddr.sh
+./scripts/probe_litex_nexys4ddr_linux.sh
 ./scripts/build_litex_nexys4ddr.sh
 ./scripts/program_litex_nexys4ddr.sh   # optional, requires connected board
 ```
