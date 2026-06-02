@@ -89,12 +89,13 @@ The Stage 1 reference path uses LiteX's upstream Nexys4 DDR target to prove boar
 ./scripts/probe_litex_nexys4ddr.sh
 ./scripts/probe_litex_nexys4ddr_linux.sh
 ./scripts/build_litex_nexys4ddr.sh
+./scripts/build_litex_nexys4ddr_linux.sh
 ./scripts/program_litex_nexys4ddr.sh   # optional, requires connected board
 ```
 
 The probe should generate `build/litex_nexys4ddr_probe/` with `csr.json`, `csr.csv`, `memory.x`, and gateware source/TCL/XDC files. Full bitstream/BIOS build requires Vivado plus a RISC-V cross compiler. The build script automatically adds Vivado 2025.2's bundled `riscv64-unknown-elf-gcc` path when present.
 
-Current Stage 1 status: the minimal LiteX Nexys4 DDR bitstream builds, routed timing is met, the board programs successfully, and the BIOS UART prompt responds as `litex>`.
+Current Stage 1 status: both the minimal LiteX bitstream and the Linux-capable VexRiscvSMP bitstream build with routed timing met, program successfully, and reach the LiteX BIOS UART prompt (`litex>`).
 
 Vivado environment example:
 

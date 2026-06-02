@@ -1,6 +1,10 @@
-set bitstream [file normalize "build/litex_nexys4ddr/gateware/digilent_nexys4ddr.bit"]
+if {[llength $argv] >= 1} {
+    set bitstream [file normalize [lindex $argv 0]]
+} else {
+    set bitstream [file normalize "build/litex_nexys4ddr/gateware/digilent_nexys4ddr.bit"]
+}
 if {![file exists $bitstream]} {
-    error "Missing bitstream: $bitstream. Run scripts/build_litex_nexys4ddr.sh first."
+    error "Missing bitstream: $bitstream. Run a LiteX build script first."
 }
 
 puts "LITEX_PROGRAM_ATTEMPT=1 BITSTREAM=$bitstream"

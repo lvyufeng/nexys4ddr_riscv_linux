@@ -87,3 +87,49 @@ Build or fetch the Linux boot artifacts expected by this LiteX flow:
 2. Linux kernel configured for RV32 `rv32ima` + Sv32.
 3. BusyBox/initramfs image loaded at the DTS `linux,initrd-start` address.
 4. A loader path that places OpenSBI/kernel/initramfs at the addresses described by the generated metadata.
+
+## Full Linux-capable bitstream build
+
+After the metadata probe succeeds, build the Linux-capable VexRiscvSMP SoC bitstream with:
+
+```bash
+./scripts/build_litex_nexys4ddr_linux.sh
+```
+
+The build uses the same CPU/options as the metadata probe and writes the bitstream under:
+
+```text
+build/litex_nexys4ddr_linux/gateware/digilent_nexys4ddr.bit
+```
+
+Program it with:
+
+```bash
+./scripts/program_litex_nexys4ddr.sh build/litex_nexys4ddr_linux/gateware/digilent_nexys4ddr.bit
+```
+
+This bitstream has been built successfully, routed timing is met, programmed to the Nexys4 DDR with startup HIGH, and verified to reach the LiteX BIOS prompt over UART (`LITEX_UART_SMOKE_OK`). The OpenSBI/Linux/rootfs artifacts are loaded later through `litex_term --images` or a payload image.
+
+## Serial image loading plan
+
+`litex_term --images` can load multiple binaries to DDR and then jump to the address of the last image in the JSON file. For the current generated DTS, use this address plan:
+
+```json
+{
+  "Image": "0x40000000",
+  "rootfs.cpio": "0x41000000",
+  "fw_jump.bin": "0x40f00000"
+}
+```
+
+Keep `fw_jump.bin` last so LiteX jumps to OpenSBI. A template is checked in at:
+
+```text
+linux/images/litex_vexriscv_smp_images.example.json
+```
+
+Then run:
+
+```bash
+.venv/bin/litex_term /dev/ttyUSB1   --speed 115200   --serial-boot   --images linux/images/litex_vexriscv_smp_images.json
+```

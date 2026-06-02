@@ -79,3 +79,16 @@ PLIC:       0xf0c00000
 ```
 
 The next boot-flow step is to build OpenSBI/Linux/rootfs artifacts matching this generated DTS instead of the draft custom memory map.
+
+
+## Serial loader address plan
+
+For the current LiteX/VexRiscvSMP map, load images as:
+
+```text
+Linux Image:  0x40000000
+rootfs.cpio:  0x41000000
+OpenSBI jump: 0x40f00000
+```
+
+Use `linux/images/litex_vexriscv_smp_images.example.json` as the template for `litex_term --images`. Keep OpenSBI last in the JSON object so LiteX jumps to OpenSBI after all images are uploaded.

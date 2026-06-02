@@ -16,4 +16,5 @@ if ! command -v vivado >/dev/null 2>&1; then
   exit 1
 fi
 
-vivado -mode batch -source scripts/program_litex_nexys4ddr.tcl
+BITSTREAM=${1:-build/litex_nexys4ddr/gateware/digilent_nexys4ddr.bit}
+vivado -mode batch -source scripts/program_litex_nexys4ddr.tcl -tclargs "$BITSTREAM"
