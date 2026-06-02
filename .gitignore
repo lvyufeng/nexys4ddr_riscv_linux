@@ -1,0 +1,38 @@
+# Build/output artifacts
+/build/
+/out/
+*.jou
+*.log
+*.str
+*.wdb
+*.bit
+*.dcp
+*.ltx
+*.elf
+*.bin
+*.img
+*.itb
+*.dtb
+*.o
+*.a
+
+# Vivado generated directories
+.Xil/
+*.runs/
+*.sim/
+*.cache/
+*.hw/
+*.ip_user_files/
+*.gen/
+*.srcs/
+*.data/
+xsim.dir/
+
+# Python/cache/editor noise
+__pycache__/
+*.py[cod]
+.DS_Store
+*.swp
+*.swo
+.vscode/
+.idea/
