@@ -210,8 +210,10 @@ The board's 16 user LEDs are also enabled as a LiteX GPIO output controller and
 verified from Linux. They appear as the GPIO character device `/dev/gpiochip0`
 (`litex_gpio`, 16 lines); a chaser plus `0xffff`/`0xaaaa`/`0x5555` patterns drove
 all 16 LEDs successfully. The Buildroot image now ships the `libgpiod` tools, so
-they can be driven over SSH with `gpioset gpiochip0 ...`. See
-[`docs/peripherals.md`](docs/peripherals.md).
+they can be driven over SSH with `gpioset gpiochip0 ...`. The 16 user switches
+and 5 push buttons are enabled as Linux GPIO input controllers (`/dev/gpiochip1`
+and `/dev/gpiochip2`) and verified from the SD-root shell with a GPIO character
+UAPI smoke test. See [`docs/peripherals.md`](docs/peripherals.md).
 
 ## Relationship to `step_into_mips`
 

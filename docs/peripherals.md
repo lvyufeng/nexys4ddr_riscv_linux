@@ -63,6 +63,45 @@ gpioinfo gpiochip0
 gpioset gpiochip0 0=1 1=0 2=1 ...
 ```
 
+### User switch/button status (verified)
+
+The checked-in local LiteX target wrapper instantiates the Nexys4 DDR board
+switches and push buttons as LiteX `GPIOIn` controllers, avoiding edits to the
+ignored upstream `third_party/litex-boards` checkout. Their CSR locations are
+pinned after the already-verified peripherals so the Ethernet, LED, and SPI-SD
+address contract remains stable:
+
+```text
+switches:  CSR 0xf0005000, IRQ 4, 16 input lines
+buttons:   CSR 0xf0005800, IRQ 5, 5 input lines
+```
+
+Linux exposes them through additional GPIO character devices:
+
+```text
+/dev/gpiochip1  litex_gpio  16 lines  switches
+/dev/gpiochip2  litex_gpio   5 lines  buttons
+/sys/bus/platform/drivers/litex-gpio/f0005000.gpio
+/sys/bus/platform/drivers/litex-gpio/f0005800.gpio
+```
+
+Hardware/static smoke test from the SD-root shell passed with a GPIO character
+UAPI test binary:
+
+```text
+GPIO_CHIP path=/dev/gpiochip1 name=gpiochip1 label=litex_gpio lines=16
+GPIO_CHIP path=/dev/gpiochip2 name=gpiochip2 label=litex_gpio lines=5
+SWITCHES mask=0x8000
+BUTTONS  mask=0x00
+GPIO_INPUT_PROBE_OK
+```
+
+For a live dynamic check, run a short watcher and flip switches / press buttons:
+
+```bash
+/tmp/gpio_input_probe watch 60
+# prints CHANGE switches=0x.... buttons=0x.. when values change
+```
 
 ## Storage / SPI-class peripherals
 

@@ -38,6 +38,7 @@ source .venv/bin/activate
 
 OUT_DIR=${1:-build/litex_nexys4ddr_linux}
 UART_BAUDRATE=${LITEX_UART_BAUDRATE:-1000000}
+LITEX_TARGET_MODULE=${LITEX_TARGET_MODULE:-litex_targets.nexys4ddr_linux}
 EXTRA_LITEX_ARGS=()
 
 # Enable board microSD in SPI mode by default. This keeps the default generated
@@ -65,9 +66,19 @@ if [ "${LITEX_WITH_ETHERNET:-1}" = "1" ]; then
     EXTRA_LITEX_ARGS+=(--eth-dynamic-ip)
   fi
 fi
+
+# Expose the board switches/buttons as LiteX GPIO input controllers. These come
+# from the checked-in litex_targets wrapper, not the upstream target, so they are
+# only available when LITEX_TARGET_MODULE points at the local module.
+if [ "${LITEX_WITH_SWITCHES:-1}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-switches)
+fi
+if [ "${LITEX_WITH_BUTTONS:-1}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-buttons)
+fi
 mkdir -p "$(dirname "$OUT_DIR")"
 
-python3 -m litex_boards.targets.digilent_nexys4ddr \
+python3 -m "$LITEX_TARGET_MODULE" \
   --cpu-type=vexriscv_smp \
   --cpu-variant=linux \
   --cpu-count="${CPU_COUNT:-1}" \
@@ -85,29 +96,29 @@ python3 third_party/litex/litex/tools/litex_json2dts_linux.py \
   --root-device "${ROOT_DEVICE:-ram0}" \
   > "$OUT_DIR/digilent_nexys4ddr_linux.dts"
 
-# The Nexys4 DDR LedChaser drives all 16 board user LEDs, but litex_json2dts
-# defaults litex,ngpio to 4 when the CSR JSON has no leds_ngpio constant. Patch
-# the generated &leds node so Linux exposes all 16 LED outputs. Override with
-# LITEX_LEDS_NGPIO for boards/variants with a different LED count.
-python3 - "$OUT_DIR/digilent_nexys4ddr_linux.dts" "${LITEX_LEDS_NGPIO:-16}" <<'PY'
-import re
-import sys
-from pathlib import Path
-path, ngpio = sys.argv[1], int(sys.argv[2])
-text = Path(path).read_text()
-new, n = re.subn(
-    r"(&leds\s*\{.*?litex,ngpio\s*=\s*<)\d+(>)",
-    lambda m: m.group(1) + str(ngpio) + m.group(2),
-    text,
-    count=1,
-    flags=re.DOTALL,
-)
-if n:
-    Path(path).write_text(new)
-    print(f"Patched &leds litex,ngpio = <{ngpio}>")
-else:
-    print("warning: &leds litex,ngpio not found; left DTS unchanged", file=sys.stderr)
+# Patch GPIO metadata that litex_json2dts cannot infer: the LedChaser/switch GPIO
+# node counts default to 4, and the local buttons GPIO input has no upstream DTS
+# emitter. tools/patch_litex_nexys4ddr_dts.py fixes ngpio counts and inserts the
+# buttons node from the generated CSR base/interrupt.
+PATCH_ARGS=(--leds-ngpio "${LITEX_LEDS_NGPIO:-16}" --switches-ngpio "${LITEX_SWITCHES_NGPIO:-16}" --buttons-ngpio "${LITEX_BUTTONS_NGPIO:-5}")
+BUTTONS_META=$(python3 - "$OUT_DIR/csr.json" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+base = d.get("csr_bases", {}).get("buttons")
+intr = d.get("constants", {}).get("buttons_interrupt")
+print(f"0x{base:x}" if base is not None else "")
+print(intr if intr is not None else "")
 PY
+)
+BUTTONS_BASE=$(printf '%s\n' "$BUTTONS_META" | sed -n '1p')
+BUTTONS_INTERRUPT=$(printf '%s\n' "$BUTTONS_META" | sed -n '2p')
+if [ -n "$BUTTONS_BASE" ]; then
+  PATCH_ARGS+=(--buttons-base "$BUTTONS_BASE")
+fi
+if [ -n "$BUTTONS_INTERRUPT" ]; then
+  PATCH_ARGS+=(--buttons-interrupt "$BUTTONS_INTERRUPT")
+fi
+python3 tools/patch_litex_nexys4ddr_dts.py "$OUT_DIR/digilent_nexys4ddr_linux.dts" "${PATCH_ARGS[@]}"
 
 printf '\nLiteX Nexys4 DDR Linux-capable build complete. Output directory: %s\n' "$OUT_DIR"
 printf 'LiteX UART baudrate: %s\n' "$UART_BAUDRATE"
