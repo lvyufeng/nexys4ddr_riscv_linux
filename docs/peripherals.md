@@ -103,6 +103,78 @@ For a live dynamic check, run a short watcher and flip switches / press buttons:
 # prints CHANGE switches=0x.... buttons=0x.. when values change
 ```
 
+### RGB LED and seven-segment status (verified)
+
+The local LiteX target wrapper also exposes the two Nexys4 DDR RGB LEDs and the
+seven-segment display pins as simple LiteX `GPIOOut` banks. These are deliberately
+plain GPIO controllers for the first milestone; PWM/color mixing and a richer
+display driver can be layered on later.
+
+The new CSR locations are pinned after the previously verified GPIO inputs so the
+Ethernet, LED, SPI-SD, switch, and button addresses remain stable:
+
+```text
+rgb_leds:       CSR 0xf0006000, 6 output lines
+seven_seg:      CSR 0xf0006800, 8 output lines
+seven_seg_ctrl: CSR 0xf0007000, 8 output lines
+```
+
+Linux exposes the three new banks as GPIO character devices in the current
+SD-root boot:
+
+```text
+/dev/gpiochip3  litex_gpio  6 lines  rgb_leds
+/dev/gpiochip4  litex_gpio  8 lines  seven_seg segments
+/dev/gpiochip5  litex_gpio  8 lines  seven_seg digit enables
+```
+
+RGB line order in the first GPIO bank is:
+
+```text
+bit 0: RGB LED0 red
+bit 1: RGB LED0 green
+bit 2: RGB LED0 blue
+bit 3: RGB LED1 red
+bit 4: RGB LED1 green
+bit 5: RGB LED1 blue
+```
+
+The seven-segment digit-enable pins on Nexys4 DDR are active-low. The hardware
+reset value for `seven_seg_ctrl` is `0xff` so all digits stay off until Linux
+drives them. To show a pattern, write the segment mask first through
+`/dev/gpiochip4`, then drive one digit-enable bit low through `/dev/gpiochip5`.
+
+A small GPIO character-UAPI helper is kept in `tools/gpio_output_set.c`; build it
+for the Buildroot RISC-V userspace and copy it to the board when `gpioset` is not
+available in the running SD-root image:
+
+```bash
+third_party/buildroot/output/host/bin/riscv32-buildroot-linux-gnu-gcc.br_real \
+  -O2 -Wall -Wextra -o build/test-tools/gpio_output_set tools/gpio_output_set.c
+```
+
+Hardware smoke test over SSH passed with the new display GPIO bitstream and
+SD-root DTB:
+
+```text
+GPIO_CHIP path=/dev/gpiochip3 name=gpiochip3 label=litex_gpio lines=6
+GPIO_OUTPUT_SET path=/dev/gpiochip3 lines=6 mask=0x1 hold_ms=2000
+GPIO_OUTPUT_SET_OK
+...
+GPIO_OUTPUT_SET path=/dev/gpiochip3 lines=6 mask=0x20 hold_ms=2000
+GPIO_OUTPUT_SET_OK
+
+GPIO_CHIP path=/dev/gpiochip4 name=gpiochip4 label=litex_gpio lines=8
+GPIO_OUTPUT_SET path=/dev/gpiochip4 lines=8 mask=0x3f hold_ms=300
+GPIO_OUTPUT_SET_OK
+GPIO_CHIP path=/dev/gpiochip5 name=gpiochip5 label=litex_gpio lines=8
+GPIO_OUTPUT_SET path=/dev/gpiochip5 lines=8 mask=0xfe hold_ms=1000
+GPIO_OUTPUT_SET_OK
+...
+GPIO_OUTPUT_SET path=/dev/gpiochip5 lines=8 mask=0xff hold_ms=500
+GPIO_OUTPUT_SET_OK
+```
+
 ## Storage / SPI-class peripherals
 
 Candidate devices:

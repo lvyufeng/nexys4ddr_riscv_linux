@@ -206,14 +206,22 @@ confirm the current address.
 Ethernet/TFTP/NFS boot remains a later boot-media path; for now Ethernet is a
 Linux peripheral on top of the verified SD-root boot flow.
 
-The board's 16 user LEDs are also enabled as a LiteX GPIO output controller and
-verified from Linux. They appear as the GPIO character device `/dev/gpiochip0`
-(`litex_gpio`, 16 lines); a chaser plus `0xffff`/`0xaaaa`/`0x5555` patterns drove
-all 16 LEDs successfully. The Buildroot image now ships the `libgpiod` tools, so
-they can be driven over SSH with `gpioset gpiochip0 ...`. The 16 user switches
-and 5 push buttons are enabled as Linux GPIO input controllers (`/dev/gpiochip1`
-and `/dev/gpiochip2`) and verified from the SD-root shell with a GPIO character
-UAPI smoke test. See [`docs/peripherals.md`](docs/peripherals.md).
+The board's GPIO-class peripherals are now enabled and verified from SD-root Linux.
+The 16 user LEDs appear as `/dev/gpiochip0` (`litex_gpio`, 16 output lines) and
+a chaser plus `0xffff`/`0xaaaa`/`0x5555` patterns drove all 16 LEDs
+successfully. The 16 user switches and 5 push buttons are enabled as Linux GPIO
+input controllers (`/dev/gpiochip1` and `/dev/gpiochip2`) and verified from the
+SD-root shell with a GPIO character UAPI smoke test. The two RGB LEDs and
+seven-segment display are also enabled as simple GPIO output controllers:
+
+```text
+/dev/gpiochip3  rgb_leds        6 output lines
+/dev/gpiochip4  seven_seg       8 output lines
+/dev/gpiochip5  seven_seg_ctrl  8 output lines, active-low digit enables
+```
+
+The RGB LED channels and seven-segment digit scan were verified over SSH with a
+GPIO character-UAPI helper. See [`docs/peripherals.md`](docs/peripherals.md).
 
 ## Relationship to `step_into_mips`
 

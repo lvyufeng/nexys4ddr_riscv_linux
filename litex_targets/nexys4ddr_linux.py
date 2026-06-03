@@ -6,13 +6,23 @@ peripherals that are not instantiated by the upstream target yet. Keeping this i
 repo avoids editing the ignored third_party/litex-boards checkout.
 """
 
+from migen import Cat
+
 from litex_boards.targets import digilent_nexys4ddr
-from litex.soc.cores.gpio import GPIOIn
+from litex.soc.cores.gpio import GPIOIn, GPIOOut
 from litex.soc.integration.builder import Builder
 
 
 class LocalSoC(digilent_nexys4ddr.BaseSoC):
-    def __init__(self, *args, with_switches=False, with_buttons=False, **kwargs):
+    def __init__(
+        self,
+        *args,
+        with_switches=False,
+        with_buttons=False,
+        with_rgb_leds=False,
+        with_seven_seg=False,
+        **kwargs,
+    ):
         super().__init__(*args, **kwargs)
 
         if with_switches:
@@ -26,6 +36,25 @@ class LocalSoC(digilent_nexys4ddr.BaseSoC):
             self.csr.add("buttons", n=11, use_loc_if_exists=True)
             self.irq.add("buttons")
             self.add_constant("buttons_ngpio", 5)
+
+        if with_rgb_leds:
+            rgb0 = self.platform.request("rgb_led", 0)
+            rgb1 = self.platform.request("rgb_led", 1)
+            rgb_pads = Cat(rgb0.r, rgb0.g, rgb0.b, rgb1.r, rgb1.g, rgb1.b)
+            self.rgb_leds = GPIOOut(rgb_pads)
+            self.csr.add("rgb_leds", n=12, use_loc_if_exists=True)
+            self.add_constant("rgb_leds_ngpio", 6)
+
+        if with_seven_seg:
+            self.seven_seg = GPIOOut(self.platform.request("seven_seg"), reset=0x00)
+            self.csr.add("seven_seg", n=13, use_loc_if_exists=True)
+            self.add_constant("seven_seg_ngpio", 8)
+
+            # Nexys4 DDR digit enables are active-low. Reset all high so no digit
+            # is selected until Linux explicitly drives the controller.
+            self.seven_seg_ctrl = GPIOOut(self.platform.request("seven_seg_ctrl_n"), reset=0xff)
+            self.csr.add("seven_seg_ctrl", n=14, use_loc_if_exists=True)
+            self.add_constant("seven_seg_ctrl_ngpio", 8)
 
 
 def main():
@@ -50,6 +79,8 @@ def main():
     viopts.add_argument("--with-video-framebuffer", action="store_true", help="Enable Video Framebuffer (VGA).")
     parser.add_target_argument("--with-switches", action="store_true", help="Expose 16 board switches as LiteX GPIO inputs.")
     parser.add_target_argument("--with-buttons", action="store_true", help="Expose 5 board buttons as LiteX GPIO inputs.")
+    parser.add_target_argument("--with-rgb-leds", action="store_true", help="Expose the two RGB LEDs as 6 LiteX GPIO outputs.")
+    parser.add_target_argument("--with-seven-seg", action="store_true", help="Expose seven-segment segments and digit controls as LiteX GPIO outputs.")
     args = parser.parse_args()
 
     soc = LocalSoC(
@@ -63,6 +94,8 @@ def main():
         with_video_framebuffer=args.with_video_framebuffer,
         with_switches=args.with_switches,
         with_buttons=args.with_buttons,
+        with_rgb_leds=args.with_rgb_leds,
+        with_seven_seg=args.with_seven_seg,
         **parser.soc_argdict,
     )
     if args.with_spi_sdcard:

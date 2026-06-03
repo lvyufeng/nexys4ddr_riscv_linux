@@ -44,6 +44,15 @@ fi
 if [ "${LITEX_WITH_BUTTONS:-1}" = "1" ]; then
   EXTRA_LITEX_ARGS+=(--with-buttons)
 fi
+
+# Expose RGB LEDs and seven-segment display pins as simple GPIO outputs first;
+# richer LED/PWM/display drivers can be layered on after pin-level verification.
+if [ "${LITEX_WITH_RGB_LEDS:-1}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-rgb-leds)
+fi
+if [ "${LITEX_WITH_SEVEN_SEG:-1}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-seven-seg)
+fi
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
@@ -69,26 +78,42 @@ python3 third_party/litex/litex/tools/litex_json2dts_linux.py \
   > "$OUT_DIR/digilent_nexys4ddr_linux.dts"
 
 # Patch GPIO metadata that litex_json2dts cannot infer: the LedChaser/switch GPIO
-# node counts default to 4, and the local buttons GPIO input has no upstream DTS
-# emitter. tools/patch_litex_nexys4ddr_dts.py fixes ngpio counts and inserts the
-# buttons node from the generated CSR base.
-PATCH_ARGS=(--leds-ngpio "${LITEX_LEDS_NGPIO:-16}" --switches-ngpio "${LITEX_SWITCHES_NGPIO:-16}" --buttons-ngpio "${LITEX_BUTTONS_NGPIO:-5}")
-BUTTONS_META=$(python3 - "$OUT_DIR/csr.json" <<'PY'
+# node counts default to 4, and local GPIO banks that lack upstream DTS emitters
+# are inserted from their generated CSR bases.
+PATCH_ARGS=(
+  --leds-ngpio "${LITEX_LEDS_NGPIO:-16}"
+  --switches-ngpio "${LITEX_SWITCHES_NGPIO:-16}"
+  --buttons-ngpio "${LITEX_BUTTONS_NGPIO:-5}"
+  --rgb-leds-ngpio "${LITEX_RGB_LEDS_NGPIO:-6}"
+  --seven-seg-ngpio "${LITEX_SEVEN_SEG_NGPIO:-8}"
+  --seven-seg-ctrl-ngpio "${LITEX_SEVEN_SEG_CTRL_NGPIO:-8}"
+)
+GPIO_META=$(python3 - "$OUT_DIR/csr.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
-base = d.get("csr_bases", {}).get("buttons")
-intr = d.get("constants", {}).get("buttons_interrupt")
-print(f"0x{base:x}" if base is not None else "")
-print(intr if intr is not None else "")
+bases = d.get("csr_bases", {})
+constants = d.get("constants", {})
+for name in ["buttons", "rgb_leds", "seven_seg", "seven_seg_ctrl"]:
+    base = bases.get(name)
+    print(f"{name}_base=0x{base:x}" if base is not None else f"{name}_base=")
+print(f"buttons_interrupt={constants.get('buttons_interrupt', '')}")
 PY
 )
-BUTTONS_BASE=$(printf '%s\n' "$BUTTONS_META" | sed -n '1p')
-BUTTONS_INTERRUPT=$(printf '%s\n' "$BUTTONS_META" | sed -n '2p')
-if [ -n "$BUTTONS_BASE" ]; then
-  PATCH_ARGS+=(--buttons-base "$BUTTONS_BASE")
+eval "$GPIO_META"
+if [ -n "$buttons_base" ]; then
+  PATCH_ARGS+=(--buttons-base "$buttons_base")
 fi
-if [ -n "$BUTTONS_INTERRUPT" ]; then
-  PATCH_ARGS+=(--buttons-interrupt "$BUTTONS_INTERRUPT")
+if [ -n "$buttons_interrupt" ]; then
+  PATCH_ARGS+=(--buttons-interrupt "$buttons_interrupt")
+fi
+if [ -n "$rgb_leds_base" ]; then
+  PATCH_ARGS+=(--rgb-leds-base "$rgb_leds_base")
+fi
+if [ -n "$seven_seg_base" ]; then
+  PATCH_ARGS+=(--seven-seg-base "$seven_seg_base")
+fi
+if [ -n "$seven_seg_ctrl_base" ]; then
+  PATCH_ARGS+=(--seven-seg-ctrl-base "$seven_seg_ctrl_base")
 fi
 python3 tools/patch_litex_nexys4ddr_dts.py "$OUT_DIR/digilent_nexys4ddr_linux.dts" "${PATCH_ARGS[@]}"
 
