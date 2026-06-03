@@ -35,6 +35,12 @@ fi
   if [ -f "$POST_IMAGE_SCRIPT" ]; then
     ./utils/config --file .config --set-str BR2_ROOTFS_POST_IMAGE_SCRIPT "$POST_IMAGE_SCRIPT"
   fi
+  # Keep the serial-loaded initramfs compact. At 115200 baud, the raw CPIO
+  # rootfs dominates upload time; gzip typically cuts it by several MiB and is
+  # supported by the kernel config via CONFIG_RD_GZIP=y.
+  ./utils/config --file .config --enable BR2_TARGET_ROOTFS_CPIO
+  ./utils/config --file .config --disable BR2_TARGET_ROOTFS_CPIO_NONE
+  ./utils/config --file .config --enable BR2_TARGET_ROOTFS_CPIO_GZIP
   make olddefconfig
   make -j"${JOBS:-$(nproc)}"
 )

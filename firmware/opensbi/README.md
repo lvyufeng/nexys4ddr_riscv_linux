@@ -7,7 +7,7 @@ OpenSBI load/reserved address: 0x40f00000
 OpenSBI reserved size:         0x00080000
 DDR base:                      0x40000000
 Kernel image load address:     0x40000000
-Initramfs load window:         0x41000000..0x41800000
+Initramfs load window:         starts at 0x41000000; DTB end is generated from rootfs.cpio.gz size
 ```
 
 Use the generated DTS as the hardware contract:
@@ -32,7 +32,7 @@ Important: `litex_term --images` boots the address of the last image in JSON ins
 {
   "Image": "0x40000000",
   "rv32.dtb": "0x40ef0000",
-  "rootfs.cpio": "0x41000000",
+  "rootfs.cpio.gz": "0x41000000",
   "opensbi.bin": "0x40f00000"
 }
 ```
@@ -41,7 +41,7 @@ Example upload command once the files exist next to the JSON file:
 
 ```bash
 .venv/bin/litex_term /dev/ttyUSB1 \
-  --speed 115200 \
+  --speed 1000000 \
   --serial-boot \
   --images linux/images/litex_vexriscv_smp_images.json
 ```
@@ -93,7 +93,7 @@ The full serial-loaded path has been verified on Nexys4 DDR hardware:
 opensbi.bin @ 0x40f00000
 Image       @ 0x40000000
 rv32.dtb    @ 0x40ef0000
-rootfs.cpio @ 0x41000000
+rootfs.cpio.gz @ 0x41000000
 ```
 
 OpenSBI jumps to Linux S-mode at `0x40000000` with DTB argument `0x40ef0000`,

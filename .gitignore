@@ -44,6 +44,7 @@ third_party/
 # Generated Linux serial-boot images
 linux/images/Image
 linux/images/rootfs.cpio
+linux/images/rootfs.cpio.gz
 linux/images/litex_vexriscv_smp_images.json
 
 # Generated local mirror of third-party Buildroot patches

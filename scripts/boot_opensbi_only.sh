@@ -1,15 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# litex_term needs a real TTY for keyboard/terminal handling. When this script is
-# launched from Claude Code or another non-interactive shell, re-run itself under
-# `script(1)` to provide a pseudo-terminal.
-if [ -z "${LITEX_BOOT_PTY:-}" ] && ! [ -t 0 ] && command -v script >/dev/null 2>&1; then
-  transcript=${LITEX_BOOT_TRANSCRIPT:-/tmp/boot_opensbi_only.typescript}
-  cmd=$(printf '%q ' "$0" "$@")
-  exec env LITEX_BOOT_PTY=1 script -qfec "$cmd" "$transcript"
-fi
-
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT_DIR"
 
@@ -21,6 +12,10 @@ fi
 if [ ! -d .venv ]; then
   echo "Missing .venv. Run scripts/bootstrap_litex.sh first." >&2
   exit 1
+fi
+PYTHON=${PYTHON:-.venv/bin/python}
+if [ ! -x "$PYTHON" ]; then
+  PYTHON=python3
 fi
 if [ ! -f linux/images/opensbi.bin ]; then
   echo "Missing linux/images/opensbi.bin. Run scripts/build_opensbi_litex.sh first." >&2
@@ -46,15 +41,17 @@ PYJSON
 cp linux/images/rv32.dtb "$TMP_DIR/rv32.dtb"
 cp linux/images/opensbi.bin "$TMP_DIR/opensbi.bin"
 
-# Start litex_term in serial-boot mode. This listens for the LiteX BIOS
-# boot-menu serial prompt and answers it before uploading images. Start this
-# shortly after programming/resetting the FPGA so the BIOS boot prompt has not
-# timed out yet. If the board is already at the `litex>` prompt, run `reboot`
-# manually and immediately re-run this command, or press the FPGA reset button.
-timeout --foreground "${LITEX_TERM_TIMEOUT:-180}" \
-  .venv/bin/litex_term "$PORT" \
-    --speed 115200 \
-    --serial-boot \
-    --images "$TMP_JSON" \
-    --exit-on "OpenSBI" \
-    "$@"
+# Use the same non-interactive SFL uploader as the full Linux path. It can issue
+# `serialboot` from an already-idle LiteX BIOS prompt and does not require stdin
+# to be a real TTY.
+"$PYTHON" scripts/serial_boot_litex_images.py \
+  --port "$PORT" \
+  --speed "${LITEX_BAUD:-1000000}" \
+  --images "$TMP_JSON" \
+  --chunk-size "${LITEX_SFL_CHUNK:-251}" \
+  --ack-window "${LITEX_SFL_ACK_WINDOW:-64}" \
+  --loader-timeout "${LITEX_LOADER_TIMEOUT:-30}" \
+  --console-timeout "${LITEX_CONSOLE_TIMEOUT:-180}" \
+  --exit-on "OpenSBI" \
+  --log "${LITEX_BOOT_TRANSCRIPT:-/tmp/boot_opensbi_only.log}" \
+  "$@"

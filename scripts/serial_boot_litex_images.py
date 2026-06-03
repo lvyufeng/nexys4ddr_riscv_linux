@@ -8,7 +8,7 @@ It supports the image JSON format used by litex_term:
 {
   "Image": "0x40000000",
   "rv32.dtb": "0x40ef0000",
-  "rootfs.cpio": "0x41000000",
+  "rootfs.cpio.gz": "0x41000000",
   "opensbi.bin": "0x40f00000"
 }
 
@@ -188,41 +188,83 @@ class SerialBooter:
         return reply
 
     def send_frame(self, cmd: bytes, payload: bytes, retries: int = 16) -> None:
-        frame = encode_frame(cmd, payload)
-        last_reply = None
-        for _ in range(retries):
-            self.ser.write(frame)
-            self.ser.flush()
-            reply = self.read_ack()
-            last_reply = reply
-            if reply == SFL_ACK_SUCCESS:
-                return
-            if reply == SFL_ACK_CRCERROR:
-                continue
-            raise RuntimeError(f"Unexpected SFL reply {reply!r}")
-        raise RuntimeError(f"Too many CRC errors; last reply={last_reply!r}")
+        self.send_encoded_frames([encode_frame(cmd, payload)], retries=retries)
 
-    def upload_file(self, path: Path, address: int, chunk_size: int) -> None:
+    def send_encoded_frames(self, frames: list[bytes], retries: int = 16) -> None:
+        """Send one or more SFL frames and collect their ACKs.
+
+        LiteX SFL acknowledges every frame. Waiting for each ACK before sending
+        the next frame makes the host pay the USB-UART latency timer once per
+        251-byte chunk. Sending a small window first and then draining the ACKs
+        keeps the UART busy while preserving the protocol's per-frame checks.
+        """
+        if not frames:
+            return
+
+        pending = list(enumerate(frames))
+        last_replies: list[bytes] = []
+        for attempt in range(retries):
+            for _, frame in pending:
+                self.ser.write(frame)
+            self.ser.flush()
+
+            retry: list[tuple[int, bytes]] = []
+            last_replies = []
+            for idx, frame in pending:
+                reply = self.read_ack()
+                last_replies.append(reply)
+                if reply == SFL_ACK_SUCCESS:
+                    continue
+                if reply == SFL_ACK_CRCERROR:
+                    retry.append((idx, frame))
+                    continue
+                raise RuntimeError(f"Unexpected SFL reply {reply!r}")
+
+            if not retry:
+                return
+            print(f"[SFL] CRC retry: {len(retry)} frame(s), attempt {attempt + 1}/{retries}", flush=True)
+            pending = retry
+
+        raise RuntimeError(f"Too many CRC errors; last replies={last_replies!r}")
+
+    def upload_file(self, path: Path, address: int, chunk_size: int, ack_window: int) -> None:
         size = path.stat().st_size
-        print(f"[SFL] Uploading {path} to 0x{address:08x} ({size} bytes)...", flush=True)
+        print(f"[SFL] Uploading {path} to 0x{address:08x} ({size} bytes, ack-window={ack_window})...", flush=True)
         start = time.monotonic()
         sent = 0
         last_report = start
+
+        def report(force: bool = False) -> None:
+            nonlocal last_report
+            now = time.monotonic()
+            if force or now - last_report >= 1.0 or sent == size:
+                pct = 100.0 * sent / size if size else 100.0
+                rate = sent / max(now - start, 1e-6) / 1024.0
+                print(f"[SFL]   {path.name}: {sent}/{size} bytes ({pct:5.1f}%, {rate:5.1f} KiB/s)", flush=True)
+                last_report = now
+
         with path.open("rb") as f:
             current = address
+            pending: list[bytes] = []
+            pending_bytes = 0
             while True:
                 chunk = f.read(chunk_size)
                 if not chunk:
                     break
-                self.send_frame(SFL_CMD_LOAD, current.to_bytes(4, "big") + chunk)
+                pending.append(encode_frame(SFL_CMD_LOAD, current.to_bytes(4, "big") + chunk))
                 current += len(chunk)
-                sent += len(chunk)
-                now = time.monotonic()
-                if now - last_report >= 1.0 or sent == size:
-                    pct = 100.0 * sent / size if size else 100.0
-                    rate = sent / max(now - start, 1e-6) / 1024.0
-                    print(f"[SFL]   {path.name}: {sent}/{size} bytes ({pct:5.1f}%, {rate:5.1f} KiB/s)", flush=True)
-                    last_report = now
+                pending_bytes += len(chunk)
+                if len(pending) >= ack_window:
+                    self.send_encoded_frames(pending)
+                    sent += pending_bytes
+                    pending = []
+                    pending_bytes = 0
+                    report()
+
+            if pending:
+                self.send_encoded_frames(pending)
+                sent += pending_bytes
+                report(force=True)
         elapsed = time.monotonic() - start
         print(f"[SFL] Upload complete: {path.name} ({size / max(elapsed, 1e-6) / 1024.0:.1f} KiB/s).", flush=True)
 
@@ -268,9 +310,11 @@ def load_images(images_path: Path) -> tuple[list[tuple[Path, int]], int]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", default="/dev/ttyUSB1")
-    parser.add_argument("--speed", type=int, default=115200)
+    parser.add_argument("--speed", type=int, default=1000000)
     parser.add_argument("--images", required=True)
     parser.add_argument("--chunk-size", type=int, default=251, help="SFL data bytes per load frame, max 251")
+    parser.add_argument("--ack-window", type=int, default=64, help="number of SFL load frames to send before draining ACKs")
+    parser.add_argument("--safe", action="store_true", help="use one-frame ACK windows for maximum compatibility")
     parser.add_argument("--loader-timeout", type=float, default=30.0)
     parser.add_argument("--console-timeout", type=float, default=300.0)
     parser.add_argument("--exit-on", default="buildroot login:")
@@ -279,6 +323,10 @@ def main() -> int:
 
     if not (1 <= args.chunk_size <= 251):
         parser.error("--chunk-size must be in [1, 251]")
+    if args.safe:
+        args.ack_window = 1
+    if args.ack_window < 1:
+        parser.error("--ack-window must be >= 1")
 
     images, jump_address = load_images(Path(args.images))
     print("[SFL] Images:", flush=True)
@@ -290,7 +338,7 @@ def main() -> int:
     try:
         booter.wait_for_serial_loader(args.loader_timeout)
         for path, address in images:
-            booter.upload_file(path, address, args.chunk_size)
+            booter.upload_file(path, address, args.chunk_size, args.ack_window)
         booter.jump(jump_address)
         marker = args.exit_on.encode() if args.exit_on else None
         ok = booter.console_until(marker, args.console_timeout)

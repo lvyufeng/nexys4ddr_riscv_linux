@@ -19,17 +19,16 @@ copy_required() {
 }
 
 copy_required "$BINARIES_DIR/Image" "$DST/Image"
-copy_required "$BINARIES_DIR/rootfs.cpio" "$DST/rootfs.cpio"
+copy_required "$BINARIES_DIR/rootfs.cpio.gz" "$DST/rootfs.cpio.gz"
+rm -f "$DST/rootfs.cpio"
 copy_required "$BINARIES_DIR/fw_jump.bin" "$DST/opensbi.bin"
 
-# Buildroot does not generate the LiteX DTB in this flow; keep/use the DTB built
-# from linux/dts/litex_nexys4ddr_vexriscv_smp.dts.
-if [ ! -f "$DST/rv32.dtb" ]; then
-  "$ROOT_DIR/scripts/build_litex_dtb.sh"
-fi
+# Buildroot does not generate the LiteX DTB in this flow. Rebuild it here so
+# linux,initrd-end matches the compressed initramfs size exactly.
+INITRD_IMAGE="$DST/rootfs.cpio.gz" "$ROOT_DIR/scripts/build_litex_dtb.sh"
 
 cp "$ROOT_DIR/linux/images/litex_vexriscv_smp_images.example.json" \
    "$DST/litex_vexriscv_smp_images.json"
 
 printf '\nNexys4 DDR LiteX Linux images are ready in %s:\n' "$DST"
-ls -lh "$DST"/Image "$DST"/rootfs.cpio "$DST"/opensbi.bin "$DST"/rv32.dtb "$DST"/litex_vexriscv_smp_images.json
+ls -lh "$DST"/Image "$DST"/rootfs.cpio.gz "$DST"/opensbi.bin "$DST"/rv32.dtb "$DST"/litex_vexriscv_smp_images.json

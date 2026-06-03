@@ -19,6 +19,61 @@ if [ -z "$DTC" ]; then
   fi
 fi
 
+TMP_DTS=
+cleanup() {
+  if [ -n "$TMP_DTS" ]; then
+    rm -f "$TMP_DTS"
+  fi
+}
+trap cleanup EXIT
+
+if [ -z "${INITRD_IMAGE:-}" ] && [ -f linux/images/rootfs.cpio.gz ]; then
+  INITRD_IMAGE=linux/images/rootfs.cpio.gz
+fi
+
+# When INITRD_IMAGE is provided, patch linux,initrd-end to the exact loaded
+# file end. This matters for gzip-compressed initramfs images: using a much
+# larger static window can make Linux inspect unrelated DDR bytes after the
+# compressed stream.
+if [ -n "${INITRD_IMAGE:-}" ]; then
+  if [ ! -f "$INITRD_IMAGE" ]; then
+    echo "Missing INITRD_IMAGE: $INITRD_IMAGE" >&2
+    exit 1
+  fi
+  INITRD_START=${INITRD_START:-0x41000000}
+  INITRD_INFO=$(python3 - "$INITRD_START" "$INITRD_IMAGE" <<'PY'
+import os
+import sys
+start = int(sys.argv[1], 0)
+size = os.path.getsize(sys.argv[2])
+end = start + size
+print(f"0x{end:08x} {size}")
+PY
+)
+  INITRD_END=${INITRD_INFO%% *}
+  INITRD_SIZE=${INITRD_INFO##* }
+  TMP_DTS=$(mktemp)
+  python3 - "$DTS" "$TMP_DTS" "$INITRD_END" <<'PY'
+from pathlib import Path
+import re
+import sys
+src, dst, initrd_end = sys.argv[1:]
+text = Path(src).read_text()
+new = re.sub(
+    r"linux,initrd-end\s*=\s*<0x[0-9a-fA-F]+>;",
+    f"linux,initrd-end   = <{initrd_end}>;",
+    text,
+    count=1,
+)
+if new == text:
+    raise SystemExit("failed to patch linux,initrd-end in DTS")
+Path(dst).write_text(new)
+PY
+  DTS=$TMP_DTS
+  printf 'DTB initrd image: %s (%s bytes)\n' "$INITRD_IMAGE" "$INITRD_SIZE"
+  printf 'DTB initrd range: %s..%s\n' "$INITRD_START" "$INITRD_END"
+fi
+
 mkdir -p "$(dirname "$DTB")"
 "$DTC" -I dts -O dtb -o "$DTB" "$DTS"
 printf 'DTB image: %s\n' "$DTB"

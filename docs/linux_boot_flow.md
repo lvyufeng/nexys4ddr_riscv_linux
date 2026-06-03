@@ -88,7 +88,7 @@ For the current LiteX/VexRiscvSMP map, load images as:
 ```text
 Linux Image:  0x40000000
 rv32.dtb:      0x40ef0000
-rootfs.cpio:  0x41000000
+rootfs.cpio.gz: 0x41000000
 OpenSBI image: 0x40f00000
 ```
 

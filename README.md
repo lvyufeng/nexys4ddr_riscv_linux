@@ -10,7 +10,7 @@ The goal is to build a Linux-capable RISC-V platform on Nexys4 DDR, starting fro
 - FPGA: Xilinx Artix-7 `xc7a100tcsg324-1`
 - Clock: 100 MHz board clock
 - Memory: 128 MiB DDR2 via MIG 7-series
-- Console: USB-UART, typically `/dev/ttyUSB1`, `115200 8N1`
+- Console: USB-UART, typically `/dev/ttyUSB1`; the Linux-capable LiteX bitstream now defaults to `1000000 8N1`
 
 ## Bring-up strategy
 
@@ -114,7 +114,7 @@ The current reference boot path is:
 LiteX BIOS / serial SFL loader
   -> Image       @ 0x40000000
   -> rv32.dtb    @ 0x40ef0000
-  -> rootfs.cpio @ 0x41000000
+  -> rootfs.cpio.gz @ 0x41000000
   -> opensbi.bin @ 0x40f00000
   -> Buildroot login/root shell
 ```
@@ -135,10 +135,12 @@ Then program the Linux-capable bitstream and boot over serial:
 
 `boot_litex_linux_serial.sh` uses `scripts/serial_boot_litex_images.py`, a
 non-interactive LiteX SFL uploader that works over SSH/background jobs without a
-real terminal. At 115200 baud the full serial upload is slow (~7.7 KiB/s for the
-current 20 MiB image set), so this is a bring-up path rather than the final boot
-method. Next boot-media milestones should be compressed initramfs, higher UART
-baudrate, SD-card boot, and/or Ethernet/TFTP/NFS boot.
+real terminal. The current serial path uses a gzip-compressed initramfs and a 1,000,000 baud
+LiteUART configuration, reducing the uploaded image set from about 20 MiB to
+about 14 MiB and improving SFL throughput by roughly an order of magnitude.
+For an older 115200-baud bitstream, run the wrapper with `LITEX_BAUD=115200`.
+SD-card boot and/or Ethernet/TFTP/NFS boot remain better long-term boot-media
+paths.
 
 ## Relationship to `step_into_mips`
 

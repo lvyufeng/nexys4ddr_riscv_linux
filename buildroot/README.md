@@ -38,7 +38,7 @@ The generated LiteX/VexRiscvSMP DTS expects serial-loaded images at:
 ```text
 Linux Image:  0x40000000
 rv32.dtb:      0x40ef0000
-rootfs.cpio:  0x41000000
+rootfs.cpio.gz: 0x41000000
 opensbi.bin:  0x40f00000
 ```
 
@@ -61,7 +61,7 @@ The generated kernel/rootfs/OpenSBI outputs should then be copied or symlinked i
 ```text
 Image
 rv32.dtb
-rootfs.cpio
+rootfs.cpio.gz
 opensbi.bin
 ```
 
@@ -85,7 +85,7 @@ This populates:
 
 ```text
 linux/images/Image
-linux/images/rootfs.cpio
+linux/images/rootfs.cpio.gz
 linux/images/rv32.dtb
 linux/images/opensbi.bin
 linux/images/litex_vexriscv_smp_images.json
@@ -146,8 +146,9 @@ buildroot/post-image-nexys4ddr.sh
 The upstream script tries to generate an SD-card image with `genimage` and needs
 an upstream `images/boot.json`. For the first Nexys4 DDR bring-up we boot over
 LiteX serial loader, so the local post-image script only copies `Image`,
-`rootfs.cpio`, and `fw_jump.bin` into `linux/images/`, keeps/builds `rv32.dtb`,
-and writes `litex_vexriscv_smp_images.json`.
+`rootfs.cpio.gz`, and `fw_jump.bin` into `linux/images/`, rebuilds `rv32.dtb`
+with an initrd-end matching the compressed image size, and writes
+`litex_vexriscv_smp_images.json`.
 
 
 ## Non-interactive serial boot
@@ -164,6 +165,8 @@ therefore works reliably from background jobs. It also handles the common case
 where the board is already at the `litex>` BIOS prompt by sending `serialboot`
 before uploading images.
 
-At 115200 baud the full `Image + rootfs.cpio + DTB + OpenSBI` upload is slow
-(roughly tens of minutes). Progress is printed once per second and the UART log
-is written to `/tmp/boot_litex_linux_serial.log` by default.
+The Linux-capable LiteX bitstream defaults to 1,000,000 baud and the serial
+image map now uses `rootfs.cpio.gz`. Progress is printed once per second and the
+UART log is written to `/tmp/boot_litex_linux_serial.log` by default. For an
+older 115200-baud bitstream, set `LITEX_BAUD=115200` when running the boot
+wrapper.
