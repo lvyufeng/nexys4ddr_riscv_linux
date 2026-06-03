@@ -35,6 +35,12 @@ fi
   if [ -f "$POST_IMAGE_SCRIPT" ]; then
     ./utils/config --file .config --set-str BR2_ROOTFS_POST_IMAGE_SCRIPT "$POST_IMAGE_SCRIPT"
   fi
+  # Enable SSH access for the Ethernet milestone. Dropbear rejects empty-password
+  # root logins by default, so give the lab image a simple configurable password.
+  # Override with BR_ROOT_PASSWORD=... for a different local password.
+  ./utils/config --file .config --enable BR2_PACKAGE_DROPBEAR
+  ./utils/config --file .config --set-str BR2_TARGET_GENERIC_ROOT_PASSWD "${BR_ROOT_PASSWORD:-root}"
+
   # Keep the serial-loaded initramfs compact. At 115200 baud, the raw CPIO
   # rootfs dominates upload time; gzip typically cuts it by several MiB and is
   # supported by the kernel config via CONFIG_RD_GZIP=y.

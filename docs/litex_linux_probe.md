@@ -53,7 +53,8 @@ PLIC:       0xf0c00000, 4 MiB
 OpenSBI:    0x40f00000, 512 KiB reserved in DDR
 DDR:        0x40000000, 128 MiB
 UART:       LiteUART at 0xf0001000, IRQ 1
-SPI-SD:     LiteSPI at 0xf0003800, mmc-spi-slot child
+Ethernet:   LiteEth MAC at 0xf0002000, MDIO at 0xf0002800, IRQ 3
+SPI-SD:     LiteSPI at 0xf0004800, mmc-spi-slot child
 Timer IRQ:  IRQ 2
 ```
 
@@ -65,6 +66,7 @@ The generated DTS includes:
 - SiFive-compatible PLIC node;
 - `reserved-memory` for OpenSBI;
 - LiteUART console bootargs;
+- LiteEth `compatible = "litex,liteeth"` node for board Ethernet;
 - LiteSPI + `mmc-spi-slot` node for board microSD;
 - DDR memory node.
 
@@ -216,10 +218,11 @@ mmu         : sv32
 ## SPI microSD hardware result
 
 The board microSD slot was enabled with the LiteX `--with-spi-sdcard` option.
-The generated CSR base is `spisdcard @ 0xf0003800`, exposed in the DTS as a
-`litex,litespi` controller with an `mmc-spi-slot` child. The Linux config already
-contains the required built-in drivers (`CONFIG_SPI_LITESPI=y`,
-`CONFIG_MMC_SPI=y`, `CONFIG_MMC_BLOCK=y`).
+With the Ethernet-enabled default SoC, the generated CSR base is
+`spisdcard @ 0xf0004800`, exposed in the DTS as a `litex,litespi` controller
+with an `mmc-spi-slot` child. The Linux config already contains the required
+built-in drivers (`CONFIG_SPI_LITESPI=y`, `CONFIG_MMC_SPI=y`,
+`CONFIG_MMC_BLOCK=y`).
 
 With an 8 GB SDHC card inserted in the Nexys4 DDR microSD slot, Linux enumerated
 and mounted the card:

@@ -39,14 +39,31 @@ source .venv/bin/activate
 OUT_DIR=${1:-build/litex_nexys4ddr_linux}
 UART_BAUDRATE=${LITEX_UART_BAUDRATE:-1000000}
 EXTRA_LITEX_ARGS=()
+
 # Enable board microSD in SPI mode by default. This keeps the default generated
 # csr.json/DTB aligned with linux/dts/litex_nexys4ddr_vexriscv_smp.dts while
 # remaining easy to disable for minimal rebuilds.
+if [ "${LITEX_WITH_SPI_SDCARD:-1}" = "1" ] && [ "${LITEX_WITH_SDCARD:-0}" = "1" ]; then
+  echo "LITEX_WITH_SPI_SDCARD and LITEX_WITH_SDCARD are mutually exclusive." >&2
+  exit 1
+fi
 if [ "${LITEX_WITH_SPI_SDCARD:-1}" = "1" ]; then
   EXTRA_LITEX_ARGS+=(--with-spi-sdcard)
 fi
 if [ "${LITEX_WITH_SDCARD:-0}" = "1" ]; then
   EXTRA_LITEX_ARGS+=(--with-sdcard)
+fi
+
+# Enable the Nexys4 DDR RMII Ethernet MAC/PHY path by default for the next
+# peripheral milestone. This exposes a normal Linux LiteEth network device when
+# the generated DTS and bitstream are used together.
+if [ "${LITEX_WITH_ETHERNET:-1}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-ethernet)
+  EXTRA_LITEX_ARGS+=(--eth-ip "${LITEX_ETH_IP:-192.168.1.50}")
+  EXTRA_LITEX_ARGS+=(--remote-ip "${LITEX_REMOTE_IP:-192.168.1.100}")
+  if [ "${LITEX_ETH_DYNAMIC_IP:-0}" = "1" ]; then
+    EXTRA_LITEX_ARGS+=(--eth-dynamic-ip)
+  fi
 fi
 mkdir -p "$(dirname "$OUT_DIR")"
 

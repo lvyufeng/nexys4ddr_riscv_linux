@@ -98,16 +98,28 @@ def printable(data: bytes) -> str:
 
 
 class SerialBooter:
-    def __init__(self, port: str, speed: int, log_path: str | None = None):
+    def __init__(self, port: str, speed: int, log_path: str | None = None,
+                 magic_ack_delay: float = 0.002, command_delay: float = 0.006,
+                 post_magic_delay: float = 0.05):
         self.ser = serial.Serial(port, speed, timeout=0.05, write_timeout=2.0)
         self.log = open(log_path, "ab", buffering=0) if log_path else None
         self.recent = bytearray()
         self.serial_failed = False
+        self.magic_ack_delay = magic_ack_delay
+        self.command_delay = command_delay
+        self.post_magic_delay = post_magic_delay
 
     def close(self) -> None:
         if self.log:
             self.log.close()
         self.ser.close()
+
+    def write_slow(self, data: bytes, delay: float) -> None:
+        for byte in data:
+            self.ser.write(bytes([byte]))
+            self.ser.flush()
+            if delay > 0:
+                time.sleep(delay)
 
     def _record(self, data: bytes, echo: bool = True) -> None:
         if not data:
@@ -136,6 +148,7 @@ class SerialBooter:
         deadline = time.monotonic() + timeout
         prompted = False
         command_sent = False
+        cancelled_auto_serial = False
         last_probe = 0.0
 
         # Kick the BIOS once. If it is already at litex>, this reveals the prompt.
@@ -146,25 +159,37 @@ class SerialBooter:
             self.read_some(echo=True)
 
             if SFL_PROMPT_REQ in self.recent and not prompted:
-                print("\n[SFL] BIOS serial-boot menu detected; sending ACK.", flush=True)
-                self.ser.write(SFL_PROMPT_ACK)
-                self.ser.flush()
+                print("\n[SFL] BIOS serial-boot menu detected; cancelling automatic boot.", flush=True)
+                self.write_slow(b"Q", self.command_delay)
                 prompted = True
+                cancelled_auto_serial = True
 
             if SFL_MAGIC_REQ in self.recent:
+                if not command_sent:
+                    if not cancelled_auto_serial:
+                        print("\n[SFL] Automatic serial-boot magic detected; cancelling and waiting for LiteX prompt.", flush=True)
+                        self.ser.write(b"Q")
+                        self.ser.flush()
+                        cancelled_auto_serial = True
+                    # Do not ACK the automatic boot attempt: with SD enabled, a
+                    # missed/late ACK can fall through to SD boot while host frames
+                    # are already in flight. Wait for the prompt and issue an
+                    # explicit serialboot command instead.
+                    self.recent.clear()
+                    time.sleep(0.05)
+                    continue
                 print("\n[SFL] Firmware download request detected; sending magic ACK.", flush=True)
-                self.ser.write(SFL_MAGIC_ACK)
-                self.ser.flush()
-                time.sleep(0.1)
-                self.drain()
+                self.write_slow(SFL_MAGIC_ACK, self.magic_ack_delay)
+                if self.post_magic_delay > 0:
+                    time.sleep(self.post_magic_delay)
                 return
 
             now = time.monotonic()
             recent_lower = bytes(self.recent).lower()
             if (not command_sent) and (b"litex" in recent_lower and b">" in recent_lower):
                 print("\n[SFL] LiteX prompt detected; issuing serialboot command.", flush=True)
-                self.ser.write(b"serialboot\r")
-                self.ser.flush()
+                self.recent.clear()
+                self.write_slow(b"serialboot\r", self.command_delay)
                 command_sent = True
 
             if not command_sent and not prompted and now - last_probe > 2.0:
@@ -188,25 +213,34 @@ class SerialBooter:
         changed_timeout = old_timeout != timeout
         if changed_timeout:
             self.ser.timeout = timeout
+        deadline = time.monotonic() + timeout
+        skipped = bytearray()
         try:
-            reply = self.ser.read(1)
+            while time.monotonic() < deadline:
+                reply = self.ser.read(1)
+                if not reply:
+                    continue
+                if reply in (SFL_ACK_SUCCESS, SFL_ACK_CRCERROR, SFL_ACK_UNKNOWN, SFL_ACK_ERROR):
+                    if skipped:
+                        print(f"[SFL] Skipped {len(skipped)} non-ACK byte(s) before ACK: {bytes(skipped)!r}", flush=True)
+                    return reply
+                skipped.extend(reply)
         finally:
             if changed_timeout:
                 self.ser.timeout = old_timeout
-        if not reply:
-            raise TimeoutError("Timed out waiting for SFL ACK")
-        return reply
+        raise TimeoutError("Timed out waiting for SFL ACK")
 
     def send_frame(self, cmd: bytes, payload: bytes, retries: int = 16) -> None:
         self.send_encoded_frames([encode_frame(cmd, payload)], retries=retries)
 
-    def send_encoded_frames(self, frames: list[bytes], retries: int = 16) -> None:
+    def send_encoded_frames(self, frames: list[bytes], retries: int = 16, frame_delay: float = 0.0) -> None:
         """Send one or more SFL frames and collect their ACKs.
 
         LiteX SFL acknowledges every frame. Waiting for each ACK before sending
         the next frame makes the host pay the USB-UART latency timer once per
-        251-byte chunk. Sending a small window first and then draining the ACKs
-        keeps the UART busy while preserving the protocol's per-frame checks.
+        chunk. Sending a small window first and then draining the ACKs keeps the
+        UART busy while preserving the protocol's per-frame checks. Some larger
+        BIOS builds need a small inter-frame delay to avoid LiteUART RX overflow.
         """
         if not frames:
             return
@@ -216,6 +250,9 @@ class SerialBooter:
         for attempt in range(retries):
             for _, frame in pending:
                 self.ser.write(frame)
+                if frame_delay > 0:
+                    self.ser.flush()
+                    time.sleep(frame_delay)
             self.ser.flush()
 
             retry: list[tuple[int, bytes]] = []
@@ -237,9 +274,10 @@ class SerialBooter:
 
         raise RuntimeError(f"Too many CRC errors; last replies={last_replies!r}")
 
-    def upload_file(self, path: Path, address: int, chunk_size: int, ack_window: int) -> None:
+    def upload_file(self, path: Path, address: int, chunk_size: int, ack_window: int,
+                    warmup_frames: int = 1, frame_delay: float = 0.0) -> None:
         size = path.stat().st_size
-        print(f"[SFL] Uploading {path} to 0x{address:08x} ({size} bytes, ack-window={ack_window})...", flush=True)
+        print(f"[SFL] Uploading {path} to 0x{address:08x} ({size} bytes, ack-window={ack_window}, warmup={warmup_frames}, frame-delay={frame_delay})...", flush=True)
         start = time.monotonic()
         sent = 0
         last_report = start
@@ -260,22 +298,30 @@ class SerialBooter:
                 current = address
                 pending: list[bytes] = []
                 pending_bytes = 0
+                frame_count = 0
                 while True:
                     chunk = f.read(chunk_size)
                     if not chunk:
                         break
-                    pending.append(encode_frame(SFL_CMD_LOAD, current.to_bytes(4, "big") + chunk))
+                    frame = encode_frame(SFL_CMD_LOAD, current.to_bytes(4, "big") + chunk)
                     current += len(chunk)
+                    frame_count += 1
+                    if frame_count <= warmup_frames:
+                        self.send_encoded_frames([frame])
+                        sent += len(chunk)
+                        report()
+                        continue
+                    pending.append(frame)
                     pending_bytes += len(chunk)
                     if len(pending) >= ack_window:
-                        self.send_encoded_frames(pending)
+                        self.send_encoded_frames(pending, frame_delay=frame_delay)
                         sent += pending_bytes
                         pending = []
                         pending_bytes = 0
                         report()
 
                 if pending:
-                    self.send_encoded_frames(pending)
+                    self.send_encoded_frames(pending, frame_delay=frame_delay)
                     sent += pending_bytes
                     report(force=True)
         finally:
@@ -334,6 +380,16 @@ def main() -> int:
     parser.add_argument("--ack-window", type=int, default=8, help="number of SFL load frames to send before draining ACKs")
     parser.add_argument("--safe", action="store_true", help="use one-frame ACK windows for maximum compatibility")
     parser.add_argument("--loader-timeout", type=float, default=30.0)
+    parser.add_argument("--magic-ack-delay", type=float, default=0.002,
+                        help="per-byte delay when sending the SFL magic ACK")
+    parser.add_argument("--command-delay", type=float, default=0.006,
+                        help="per-byte delay when sending BIOS commands")
+    parser.add_argument("--post-magic-delay", type=float, default=0.05,
+                        help="delay after SFL magic ACK before sending frames")
+    parser.add_argument("--warmup-frames", type=int, default=1,
+                        help="send this many initial load frames one-at-a-time")
+    parser.add_argument("--frame-delay", type=float, default=0.0,
+                        help="delay between frames inside an ACK window")
     parser.add_argument("--console-timeout", type=float, default=300.0)
     parser.add_argument("--exit-on", default="buildroot login:")
     parser.add_argument("--log", default=None)
@@ -352,11 +408,16 @@ def main() -> int:
         print(f"[SFL]   {path} -> 0x{address:08x} ({path.stat().st_size} bytes)", flush=True)
     print(f"[SFL] Boot address: 0x{jump_address:08x}", flush=True)
 
-    booter = SerialBooter(args.port, args.speed, args.log)
+    booter = SerialBooter(args.port, args.speed, args.log,
+                          magic_ack_delay=args.magic_ack_delay,
+                          command_delay=args.command_delay,
+                          post_magic_delay=args.post_magic_delay)
     try:
         booter.wait_for_serial_loader(args.loader_timeout)
         for path, address in images:
-            booter.upload_file(path, address, args.chunk_size, args.ack_window)
+            booter.upload_file(path, address, args.chunk_size, args.ack_window,
+                               warmup_frames=args.warmup_frames,
+                               frame_delay=args.frame_delay)
         booter.jump(jump_address)
         marker = args.exit_on.encode() if args.exit_on else None
         ok = booter.console_until(marker, args.console_timeout)

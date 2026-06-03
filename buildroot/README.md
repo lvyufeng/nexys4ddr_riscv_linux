@@ -31,6 +31,16 @@ It configures:
 - CPIO and ext2 rootfs outputs;
 - BusyBox userspace.
 
+The local build helper additionally enables Dropbear SSH and sets a simple lab
+root password so Ethernet login works after boot. The default is:
+
+```text
+user: root
+password: root
+```
+
+Override it for local builds with `BR_ROOT_PASSWORD=... ./scripts/build_buildroot_litex.sh`.
+
 ## Current address contract
 
 The generated LiteX/VexRiscvSMP DTS expects serial-loaded images at:
@@ -181,7 +191,16 @@ The SD-root variant uses the same kernel/OpenSBI artifacts but does not upload
 ```
 
 It loads `rv32_sdroot.dtb`, whose bootargs mount `/dev/mmcblk0p2` as the ext4
-root filesystem.
+root filesystem. With the Ethernet-enabled bitstream and Dropbear rootfs, DHCP
+and host SSH were verified:
+
+```text
+udhcpc: lease of 192.168.1.223 obtained from 192.168.1.1
+ssh root@192.168.1.223 hostname -> litex-sdroot
+```
+
+The DHCP address is lease-dependent; check the serial console or DHCP server for
+the current address after reboot.
 
 
 ## SPI microSD smoke test

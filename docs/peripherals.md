@@ -40,8 +40,8 @@ Current verified storage status:
 
 - the Linux-capable LiteX build script enables the board microSD slot with
   `--with-spi-sdcard` by default;
-- the generated/local DTS exposes `spi@f0003800` with `compatible =
-  "litex,litespi"` and an `mmc-spi-slot` child;
+- the generated/local Ethernet-enabled DTS exposes `spi@f0004800` with
+  `compatible = "litex,litespi"` and an `mmc-spi-slot` child;
 - Linux has `CONFIG_SPI_LITESPI=y`, `CONFIG_MMC_SPI=y`, and block filesystem
   support for ext2/3/4 plus VFAT/MS-DOS;
 - hardware smoke test with an 8 GB SDHC card reached:
@@ -108,22 +108,46 @@ Treat these as later work:
 Do not implement from scratch in the first phases. Prefer an existing LiteX MAC or
 third-party controller with Linux driver support.
 
-Recommended Ethernet bring-up after SD-root:
+Ethernet is now enabled with LiteX's Nexys4 DDR RMII Ethernet option and verified
+on hardware while keeping the SD-root card as the root filesystem.
 
-1. Use LiteX's Nexys4 DDR Ethernet option for the board PHY if available, and
-   regenerate the Linux metadata (`csr.json`/DTS) with Ethernet enabled.
-2. Confirm the generated CSR base, interrupt, PHY reset/MDIO wiring, and DTS node.
-3. Enable the matching Linux network driver in `linux/configs/litex_nexys4ddr_linux.config`.
-4. Rebuild the bitstream and kernel, then boot from the already-working SD-root
-   path so networking is debugged independently of rootfs upload.
-5. Hardware smoke tests:
+Current Ethernet metadata:
+
+```text
+LiteEth MAC CSR:  f0002000
+LiteEth MDIO CSR: f0002800
+LiteEth buffer:   80000000..80001fff
+LiteEth IRQ:      3 in LiteX metadata, mapped by Linux as irq 13
+SPI-SD CSR moved: f0004800
+```
+
+Hardware smoke test:
 
 ```bash
 dmesg | grep -Ei 'eth|liteeth|mdio|phy'
 ip link
 ip link set eth0 up
 udhcpc -i eth0
-ping -c 3 <gateway-ip>
+ip addr show eth0
+ping -c 3 192.168.1.1
 ```
 
-After basic `eth0` works, TFTP/NFS boot can be considered as a separate boot-media milestone.
+Observed result:
+
+```text
+liteeth f0002000.mac eth0: irq 13 slots: tx 2 rx 2 size 2048
+2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500
+udhcpc: lease of 192.168.1.223 obtained from 192.168.1.1
+3 packets transmitted, 3 packets received, 0% packet loss
+```
+
+Dropbear is also enabled in the Buildroot image. With the default lab password
+`root`, host-side SSH verification passed:
+
+```bash
+ssh root@192.168.1.223 hostname
+# -> litex-sdroot
+```
+
+The DHCP address can change on later boots. After basic `eth0` works, TFTP/NFS
+boot can be considered as a separate boot-media milestone.

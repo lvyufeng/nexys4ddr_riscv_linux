@@ -96,7 +96,7 @@ The Stage 1 reference path uses LiteX's upstream Nexys4 DDR target to prove boar
 
 The probe should generate `build/litex_nexys4ddr_probe/` with `csr.json`, `csr.csv`, `memory.x`, and gateware source/TCL/XDC files. Full bitstream/BIOS build requires Vivado plus a RISC-V cross compiler. The build script automatically adds Vivado 2025.2's bundled `riscv64-unknown-elf-gcc` path when present.
 
-Current Stage 1 status: both the minimal LiteX bitstream and the Linux-capable VexRiscvSMP bitstream build with routed timing met, program successfully, and reach the LiteX BIOS UART prompt (`litex>`). OpenSBI + Linux 6.9 + Buildroot have also been serial-loaded into DDR and verified on hardware to reach `buildroot login:` and a root shell. The Linux-capable bitstream now includes the board microSD slot in SPI mode; an 8 GB SDHC card is prepared with a VFAT boot partition and ext4 root partition, and Linux has booted with `/dev/mmcblk0p2` mounted as `/`.
+Current Stage 1 status: both the minimal LiteX bitstream and the Linux-capable VexRiscvSMP bitstream build with routed timing met, program successfully, and reach the LiteX BIOS UART prompt (`litex>`). OpenSBI + Linux 6.9 + Buildroot have also been serial-loaded into DDR and verified on hardware to reach `buildroot login:` and a root shell. The default Linux-capable bitstream now includes the board microSD slot in SPI mode plus LiteEth Ethernet; an 8 GB SDHC card is prepared with a VFAT boot partition and ext4 root partition, Linux has booted with `/dev/mmcblk0p2` mounted as `/`, and Dropbear SSH has been verified over Ethernet.
 
 Vivado environment example:
 
@@ -179,7 +179,32 @@ same 8 GB card is now prepared as:
 
 The SD-root smoke test passed with hostname `litex-sdroot`, kernel command line
 `root=/dev/mmcblk0p2 rootfstype=ext4 rw`, and `/dev/root on / type ext4`.
-Ethernet/TFTP/NFS remains a later boot-media path.
+
+The current default Linux-capable LiteX build also enables the Nexys4 DDR RMII
+Ethernet path (`LITEX_WITH_ETHERNET=1`). Hardware verification passed with the
+SD-root card still mounted as root:
+
+```text
+liteeth f0002000.mac eth0: irq 13 slots: tx 2 rx 2 size 2048
+eth0: <BROADCAST,MULTICAST,UP,LOWER_UP>
+udhcpc: lease of 192.168.1.223 obtained from 192.168.1.1
+ping 192.168.1.1: 3 packets transmitted, 3 packets received, 0% packet loss
+```
+
+The Buildroot image now enables Dropbear and sets the lab root password to
+`root` by default, so the board can be reached over SSH after DHCP:
+
+```bash
+ssh root@192.168.1.223
+# password: root
+```
+
+Host-side SSH verification returned `litex-sdroot` from the board. The DHCP
+address can change on later boots, so use the serial console or DHCP leases to
+confirm the current address.
+
+Ethernet/TFTP/NFS boot remains a later boot-media path; for now Ethernet is a
+Linux peripheral on top of the verified SD-root boot flow.
 
 ## Relationship to `step_into_mips`
 

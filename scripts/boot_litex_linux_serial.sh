@@ -29,6 +29,11 @@ fi
   --chunk-size "${LITEX_SFL_CHUNK:-251}" \
   --ack-window "${LITEX_SFL_ACK_WINDOW:-8}" \
   --loader-timeout "${LITEX_LOADER_TIMEOUT:-30}" \
+  --magic-ack-delay "${LITEX_MAGIC_ACK_DELAY:-0.002}" \
+  --command-delay "${LITEX_BIOS_COMMAND_DELAY:-0.006}" \
+  --post-magic-delay "${LITEX_POST_MAGIC_DELAY:-0.05}" \
+  --warmup-frames "${LITEX_SFL_WARMUP_FRAMES:-1}" \
+  --frame-delay "${LITEX_SFL_FRAME_DELAY:-0}" \
   --console-timeout "${LITEX_CONSOLE_TIMEOUT:-600}" \
   --exit-on "${LITEX_EXIT_ON:-buildroot login:}" \
   --log "${LITEX_BOOT_TRANSCRIPT:-/tmp/boot_litex_linux_serial.log}" \
