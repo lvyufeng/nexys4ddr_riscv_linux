@@ -40,3 +40,11 @@ __pycache__/
 # Local tool/bootstrap workspaces
 third_party/
 .venv/
+
+# Generated Linux serial-boot images
+linux/images/Image
+linux/images/rootfs.cpio
+linux/images/litex_vexriscv_smp_images.json
+
+# Generated local mirror of third-party Buildroot patches
+/local_patches/

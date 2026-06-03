@@ -152,3 +152,68 @@ OpenSBI
 ```
 
 The next missing artifacts are the Linux `Image` and `rootfs.cpio`.
+
+
+## Initramfs sizing note
+
+The generated Buildroot `rootfs.cpio` is currently larger than 8 MiB, so the
+reference DTS reserves/describes a 16 MiB initrd window:
+
+```text
+linux,initrd-start = 0x41000000
+linux,initrd-end   = 0x42000000
+```
+
+Keep the serial-loader image address at `0x41000000`. If the rootfs grows beyond
+16 MiB, increase the DTS end address and rebuild `linux/images/rv32.dtb` with
+`./scripts/build_litex_dtb.sh`.
+
+
+## Hardware Linux boot result
+
+The Linux-capable LiteX/VexRiscvSMP bitstream was programmed on the Nexys4 DDR
+and the generated Buildroot artifacts were loaded with the non-interactive SFL
+uploader:
+
+```text
+Image       -> 0x40000000
+rv32.dtb    -> 0x40ef0000
+rootfs.cpio -> 0x41000000
+opensbi.bin -> 0x40f00000
+```
+
+Verified UART markers:
+
+```text
+OpenSBI v1.3
+Linux version 6.9.0
+Welcome to Buildroot
+buildroot login:
+```
+
+Root login smoke test passed:
+
+```text
+root@buildroot:~# uname -a
+Linux buildroot 6.9.0 #1 SMP ... riscv32 GNU/Linux
+
+root@buildroot:~# cat /proc/cmdline
+console=liteuart earlycon=liteuart,0xf0001000 rootwait root=/dev/ram0
+
+root@buildroot:~# free
+Mem:         120660 ...
+
+root@buildroot:~# cat /proc/cpuinfo | head
+processor   : 0
+hart        : 0
+isa         : rv32ima
+mmu         : sv32
+```
+
+Known boot-log warnings to clean up later:
+
+- OpenSBI dynamically adds `mmode_resv*` reserved-memory entries that overlap
+  the static `opensbi@40f00000` DTS reservation. Linux still boots; remove or
+  adjust the static reservation once the final OpenSBI memory reservation policy
+  is chosen.
+- Linux reports `Initramfs unpacking failed: invalid magic at start of compressed archive`, but then successfully runs `/init` from the loaded rootfs and reaches Buildroot. This should be investigated when switching to compressed initramfs / smaller rootfs.

@@ -83,3 +83,18 @@ This validates the LiteX serial loader, DTB address, OpenSBI link/load address, 
 
 
 Before re-running this smoke test after a successful OpenSBI jump, reprogram the Linux-capable LiteX bitstream or press the FPGA reset button so the LiteX BIOS boot menu is emitted again. The automatic `--serial-boot` handshake is emitted by the LiteX BIOS during the short boot window, not by OpenSBI. If the board is already at the `litex>` prompt, the manual command is `serialboot`, but automation can miss its short magic prompt.
+
+
+## OpenSBI + Linux handoff verified
+
+The full serial-loaded path has been verified on Nexys4 DDR hardware:
+
+```text
+opensbi.bin @ 0x40f00000
+Image       @ 0x40000000
+rv32.dtb    @ 0x40ef0000
+rootfs.cpio @ 0x41000000
+```
+
+OpenSBI jumps to Linux S-mode at `0x40000000` with DTB argument `0x40ef0000`,
+and Linux 6.9 reaches the Buildroot login prompt.

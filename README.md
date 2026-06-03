@@ -31,7 +31,7 @@ Minimum hardware/software needed:
 
 ```text
 RISC-V Linux-capable CPU, initially reference core
-DDR2 at 0x8000_0000
+DDR2 at 0x4000_0000 in the current LiteX reference SoC
 UART console
 CLINT / ACLINT timer
 PLIC external interrupt controller
@@ -47,9 +47,10 @@ Expected UART milestone:
 ```text
 OpenSBI ...
 Linux version ...
-Freeing unused kernel memory
+Freeing unused kernel image
 Run /init as init process
-/ #
+Welcome to Buildroot
+buildroot login:
 ```
 
 ## Later peripheral milestones
@@ -95,7 +96,7 @@ The Stage 1 reference path uses LiteX's upstream Nexys4 DDR target to prove boar
 
 The probe should generate `build/litex_nexys4ddr_probe/` with `csr.json`, `csr.csv`, `memory.x`, and gateware source/TCL/XDC files. Full bitstream/BIOS build requires Vivado plus a RISC-V cross compiler. The build script automatically adds Vivado 2025.2's bundled `riscv64-unknown-elf-gcc` path when present.
 
-Current Stage 1 status: both the minimal LiteX bitstream and the Linux-capable VexRiscvSMP bitstream build with routed timing met, program successfully, and reach the LiteX BIOS UART prompt (`litex>`).
+Current Stage 1 status: both the minimal LiteX bitstream and the Linux-capable VexRiscvSMP bitstream build with routed timing met, program successfully, and reach the LiteX BIOS UART prompt (`litex>`). OpenSBI + Linux 6.9 + Buildroot have also been serial-loaded into DDR and verified on hardware to reach `buildroot login:` and a root shell.
 
 Vivado environment example:
 
@@ -104,6 +105,40 @@ set +u
 unset ZSH_VERSION
 source /mnt/data1/Xilinx/2025.2/Vivado/settings64.sh
 ```
+
+## Verified Linux boot flow
+
+The current reference boot path is:
+
+```text
+LiteX BIOS / serial SFL loader
+  -> Image       @ 0x40000000
+  -> rv32.dtb    @ 0x40ef0000
+  -> rootfs.cpio @ 0x41000000
+  -> opensbi.bin @ 0x40f00000
+  -> Buildroot login/root shell
+```
+
+Build and collect software images:
+
+```bash
+./scripts/bootstrap_linux_on_litex.sh
+./scripts/build_buildroot_litex.sh
+```
+
+Then program the Linux-capable bitstream and boot over serial:
+
+```bash
+./scripts/program_litex_nexys4ddr.sh build/litex_nexys4ddr_linux/gateware/digilent_nexys4ddr.bit
+./scripts/boot_litex_linux_serial.sh /dev/ttyUSB1
+```
+
+`boot_litex_linux_serial.sh` uses `scripts/serial_boot_litex_images.py`, a
+non-interactive LiteX SFL uploader that works over SSH/background jobs without a
+real terminal. At 115200 baud the full serial upload is slow (~7.7 KiB/s for the
+current 20 MiB image set), so this is a bring-up path rather than the final boot
+method. Next boot-media milestones should be compressed initramfs, higher UART
+baudrate, SD-card boot, and/or Ethernet/TFTP/NFS boot.
 
 ## Relationship to `step_into_mips`
 

@@ -11,7 +11,7 @@
         chosen {
             bootargs = "console=liteuart earlycon=liteuart,0xf0001000 rootwait root=/dev/ram0";
             linux,initrd-start = <0x41000000>;
-            linux,initrd-end   = <0x41800000>;
+            linux,initrd-end   = <0x42000000>;
         };
 
         sys_clk: clock-75000000 {
