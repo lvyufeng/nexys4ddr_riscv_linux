@@ -96,7 +96,7 @@ The Stage 1 reference path uses LiteX's upstream Nexys4 DDR target to prove boar
 
 The probe should generate `build/litex_nexys4ddr_probe/` with `csr.json`, `csr.csv`, `memory.x`, and gateware source/TCL/XDC files. Full bitstream/BIOS build requires Vivado plus a RISC-V cross compiler. The build script automatically adds Vivado 2025.2's bundled `riscv64-unknown-elf-gcc` path when present.
 
-Current Stage 1 status: both the minimal LiteX bitstream and the Linux-capable VexRiscvSMP bitstream build with routed timing met, program successfully, and reach the LiteX BIOS UART prompt (`litex>`). OpenSBI + Linux 6.9 + Buildroot have also been serial-loaded into DDR and verified on hardware to reach `buildroot login:` and a root shell.
+Current Stage 1 status: both the minimal LiteX bitstream and the Linux-capable VexRiscvSMP bitstream build with routed timing met, program successfully, and reach the LiteX BIOS UART prompt (`litex>`). OpenSBI + Linux 6.9 + Buildroot have also been serial-loaded into DDR and verified on hardware to reach `buildroot login:` and a root shell. The Linux-capable bitstream now includes the board microSD slot in SPI mode; Linux detects an inserted 8 GB SDHC card as `/dev/mmcblk0` and can mount its first partition.
 
 Vivado environment example:
 
@@ -139,8 +139,19 @@ real terminal. The current serial path uses a gzip-compressed initramfs and a 1,
 LiteUART configuration, reducing the uploaded image set from about 20 MiB to
 about 14 MiB and improving SFL throughput by roughly an order of magnitude.
 For an older 115200-baud bitstream, run the wrapper with `LITEX_BAUD=115200`.
-SD-card boot and/or Ethernet/TFTP/NFS boot remain better long-term boot-media
-paths.
+The bitstream also enables board microSD in SPI mode (`LITEX_WITH_SPI_SDCARD=1`,
+default); after boot, an inserted 8 GB SDHC card was verified as:
+
+```text
+mmc_spi spi0.0: SD/MMC host mmc0
+mmc0: new SDHC card on SPI
+mmcblk0: mmc0:0000 SL08G 7.40 GiB
+ mmcblk0: p1
+```
+
+`/dev/mmcblk0p1` mounted read-only as VFAT in the hardware smoke test. Moving
+rootfs or boot payloads onto SD is the next storage milestone; Ethernet/TFTP/NFS
+remains another long-term boot-media path.
 
 ## Relationship to `step_into_mips`
 

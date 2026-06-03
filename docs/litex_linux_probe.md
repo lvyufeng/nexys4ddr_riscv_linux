@@ -16,10 +16,11 @@ litex_boards.targets.digilent_nexys4ddr
   --cpu-variant=linux
   --cpu-count=1
   --hardware-breakpoints=0
+  --with-spi-sdcard
   --build --no-compile
 ```
 
-`--hardware-breakpoints=0` is intentional: it selects a pre-generated VexRiscvSMP cluster netlist from `pythondata-cpu-vexriscv_smp`, avoiding the need for local SBT/Scala/SpinalHDL netlist generation during the probe.
+`--hardware-breakpoints=0` is intentional: it selects a pre-generated VexRiscvSMP cluster netlist from `pythondata-cpu-vexriscv_smp`, avoiding the need for local SBT/Scala/SpinalHDL netlist generation during the probe. `--with-spi-sdcard` is now enabled by default so generated metadata includes the board microSD slot; set `LITEX_WITH_SPI_SDCARD=0` only for minimal no-SD probes.
 
 ## Generated files
 
@@ -52,6 +53,7 @@ PLIC:       0xf0c00000, 4 MiB
 OpenSBI:    0x40f00000, 512 KiB reserved in DDR
 DDR:        0x40000000, 128 MiB
 UART:       LiteUART at 0xf0001000, IRQ 1
+SPI-SD:     LiteSPI at 0xf0003800, mmc-spi-slot child
 Timer IRQ:  IRQ 2
 ```
 
@@ -63,6 +65,7 @@ The generated DTS includes:
 - SiFive-compatible PLIC node;
 - `reserved-memory` for OpenSBI;
 - LiteUART console bootargs;
+- LiteSPI + `mmc-spi-slot` node for board microSD;
 - DDR memory node.
 
 ## Important memory-map note
@@ -108,7 +111,7 @@ Program it with:
 ./scripts/program_litex_nexys4ddr.sh build/litex_nexys4ddr_linux/gateware/digilent_nexys4ddr.bit
 ```
 
-This bitstream has been built successfully, routed timing is met, programmed to the Nexys4 DDR with startup HIGH, and verified to reach the LiteX BIOS prompt over UART (`LITEX_UART_SMOKE_OK`). The OpenSBI/Linux/rootfs artifacts are loaded later through `litex_term --images` or a payload image.
+This bitstream has been built successfully, routed timing is met, programmed to the Nexys4 DDR with startup HIGH, and verified to reach the LiteX BIOS prompt over UART (`LITEX_UART_SMOKE_OK`). The default Linux-capable build now also includes the board microSD slot in SPI mode (`--with-spi-sdcard`); set `LITEX_WITH_SPI_SDCARD=0` only for minimal rebuilds. The OpenSBI/Linux/rootfs artifacts are loaded later through the project SFL uploader or a payload image.
 
 ## Serial image loading plan
 
@@ -209,6 +212,29 @@ hart        : 0
 isa         : rv32ima
 mmu         : sv32
 ```
+
+## SPI microSD hardware result
+
+The board microSD slot was enabled with the LiteX `--with-spi-sdcard` option.
+The generated CSR base is `spisdcard @ 0xf0003800`, exposed in the DTS as a
+`litex,litespi` controller with an `mmc-spi-slot` child. The Linux config already
+contains the required built-in drivers (`CONFIG_SPI_LITESPI=y`,
+`CONFIG_MMC_SPI=y`, `CONFIG_MMC_BLOCK=y`).
+
+With an 8 GB SDHC card inserted in the Nexys4 DDR microSD slot, Linux enumerated
+and mounted the card:
+
+```text
+mmc_spi spi0.0: SD/MMC host mmc0, no WP, no poweroff, cd polling
+mmc0: new SDHC card on SPI
+mmcblk0: mmc0:0000 SL08G 7.40 GiB
+ mmcblk0: p1
+/dev/mmcblk0p1 on /mnt/sd type vfat (ro,relatime,...)
+```
+
+The initial smoke test used a read-only mount to avoid modifying the user's
+existing card contents. Preparing an ext4 rootfs partition on SD is the next
+storage milestone.
 
 Known boot-log warnings to clean up later:
 

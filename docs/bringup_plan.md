@@ -81,15 +81,22 @@ dmesg | grep -i gpio
 
 Enable:
 
-- microSD, likely SPI-mode first;
+- microSD, SPI-mode first;
 - accelerometer if connected through SPI/I2C;
 - temperature sensor where applicable.
+
+Current microSD status: SPI-mode board microSD is enabled in the Linux-capable
+LiteX bitstream by default and verified on hardware. Linux enumerates the card as
+`/dev/mmcblk0` and its first partition as `/dev/mmcblk0p1`; an 8 GB SDHC card was
+mounted read-only as VFAT.
 
 Acceptance:
 
 ```bash
-dmesg | grep -i spi
-ls /dev/mmcblk*
+dmesg | grep -Ei 'mmc|spi'
+cat /proc/partitions
+ls -l /dev/mmcblk0 /dev/mmcblk0p1
+mount -o ro /dev/mmcblk0p1 /mnt/sd
 ```
 
 ## Stage 5: VGA framebuffer

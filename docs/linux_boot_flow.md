@@ -74,11 +74,14 @@ MMU:        Sv32
 DDR:        0x40000000, 128 MiB
 OpenSBI:    0x40f00000, 512 KiB reserved-memory
 UART:       LiteUART at 0xf0001000
+SPI-SD:     LiteSPI at 0xf0003800 + mmc-spi-slot
 CLINT:      0xf0010000
 PLIC:       0xf0c00000
 ```
 
-The next boot-flow step is to build OpenSBI/Linux/rootfs artifacts matching this generated DTS instead of the draft custom memory map.
+The OpenSBI/Linux/rootfs artifacts now match this generated/local DTS, including
+SPI-mode microSD. The card is currently a Linux block device (`/dev/mmcblk0`),
+not yet the primary boot/root filesystem.
 
 
 ## Serial loader address plan

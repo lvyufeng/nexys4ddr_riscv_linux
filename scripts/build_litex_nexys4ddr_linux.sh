@@ -38,6 +38,16 @@ source .venv/bin/activate
 
 OUT_DIR=${1:-build/litex_nexys4ddr_linux}
 UART_BAUDRATE=${LITEX_UART_BAUDRATE:-1000000}
+EXTRA_LITEX_ARGS=()
+# Enable board microSD in SPI mode by default. This keeps the default generated
+# csr.json/DTB aligned with linux/dts/litex_nexys4ddr_vexriscv_smp.dts while
+# remaining easy to disable for minimal rebuilds.
+if [ "${LITEX_WITH_SPI_SDCARD:-1}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-spi-sdcard)
+fi
+if [ "${LITEX_WITH_SDCARD:-0}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-sdcard)
+fi
 mkdir -p "$(dirname "$OUT_DIR")"
 
 python3 -m litex_boards.targets.digilent_nexys4ddr \
@@ -46,6 +56,7 @@ python3 -m litex_boards.targets.digilent_nexys4ddr \
   --cpu-count="${CPU_COUNT:-1}" \
   --hardware-breakpoints=0 \
   --uart-baudrate="$UART_BAUDRATE" \
+  "${EXTRA_LITEX_ARGS[@]}" \
   --build \
   --output-dir "$OUT_DIR" \
   --soc-json "$OUT_DIR/csr.json" \
@@ -59,4 +70,5 @@ python3 third_party/litex/litex/tools/litex_json2dts_linux.py \
 
 printf '\nLiteX Nexys4 DDR Linux-capable build complete. Output directory: %s\n' "$OUT_DIR"
 printf 'LiteX UART baudrate: %s\n' "$UART_BAUDRATE"
+printf 'LiteX extra args: %s\n' "${EXTRA_LITEX_ARGS[*]:-(none)}"
 find "$OUT_DIR" -maxdepth 4 -type f \( -name '*.bit' -o -name '*.bin' -o -name 'bios.*' -o -name 'csr.json' -o -name 'csr.csv' -o -name 'memory.x' -o -name '*.dts' -o -name '*timing*.rpt' \) | sort

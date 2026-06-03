@@ -121,6 +121,27 @@
                 status = "okay";
             };
 
+            litespisdcard0: spi@f0003800 {
+                compatible = "litex,litespi";
+                reg = <0xf0003800 0x100>;
+                status = "okay";
+
+                litespi,max-bpw = <8>;
+                litespi,sck-frequency = <1500000>;
+                litespi,num-cs = <1>;
+
+                #address-cells = <1>;
+                #size-cells = <0>;
+
+                mmc-slot@0 {
+                    compatible = "mmc-spi-slot";
+                    reg = <0>;
+                    voltage-ranges = <3300 3300>;
+                    spi-max-frequency = <1500000>;
+                    status = "okay";
+                };
+            };
+
             leds: gpio@f0002800 {
                 compatible = "litex,gpio";
                 reg = <0xf0002800 0x4>;
@@ -135,6 +156,7 @@
         aliases {
 
                 serial0 = &liteuart0;
+                sdcard0 = &litespisdcard0;
 
         };
 

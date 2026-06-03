@@ -170,3 +170,28 @@ image map now uses `rootfs.cpio.gz`. Progress is printed once per second and the
 UART log is written to `/tmp/boot_litex_linux_serial.log` by default. For an
 older 115200-baud bitstream, set `LITEX_BAUD=115200` when running the boot
 wrapper.
+
+
+## SPI microSD smoke test
+
+The default Linux-capable bitstream includes the Nexys4 DDR board microSD slot in
+SPI mode. The kernel config already enables `CONFIG_SPI_LITESPI`,
+`CONFIG_MMC_SPI`, `CONFIG_MMC_BLOCK`, `CONFIG_EXT4_FS`, and `CONFIG_VFAT_FS`.
+After boot, an inserted 8 GB SDHC card was verified with:
+
+```bash
+dmesg | grep -Ei 'mmc|spi'
+cat /proc/partitions
+ls -l /dev/mmcblk0 /dev/mmcblk0p1
+mkdir -p /mnt/sd
+mount -o ro /dev/mmcblk0p1 /mnt/sd
+mount | grep mmc
+umount /mnt/sd
+```
+
+Observed card marker:
+
+```text
+mmcblk0: mmc0:0000 SL08G 7.40 GiB
+ mmcblk0: p1
+```

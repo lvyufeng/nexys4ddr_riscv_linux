@@ -12,6 +12,13 @@ fi
 source .venv/bin/activate
 
 OUT_DIR=${1:-build/litex_nexys4ddr_linux_probe}
+EXTRA_LITEX_ARGS=()
+if [ "${LITEX_WITH_SPI_SDCARD:-1}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-spi-sdcard)
+fi
+if [ "${LITEX_WITH_SDCARD:-0}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-sdcard)
+fi
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
@@ -23,6 +30,7 @@ python3 -m litex_boards.targets.digilent_nexys4ddr \
   --cpu-variant=linux \
   --cpu-count="${CPU_COUNT:-1}" \
   --hardware-breakpoints=0 \
+  "${EXTRA_LITEX_ARGS[@]}" \
   --build \
   --no-compile \
   --output-dir "$OUT_DIR" \
