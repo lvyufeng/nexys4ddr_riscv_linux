@@ -26,13 +26,14 @@ Template image map:
 linux/images/litex_vexriscv_smp_images.example.json
 ```
 
-Important: `litex_term --images` boots the address of the last image in JSON insertion order. Keep `fw_jump.bin` last so the serial loader jumps to OpenSBI after loading the kernel and initramfs.
+Important: `litex_term --images` boots the address of the last image in JSON insertion order. Keep `opensbi.bin` last so the serial loader jumps to OpenSBI after loading the kernel, DTB, and initramfs.
 
 ```json
 {
   "Image": "0x40000000",
+  "rv32.dtb": "0x40ef0000",
   "rootfs.cpio": "0x41000000",
-  "fw_jump.bin": "0x40f00000"
+  "opensbi.bin": "0x40f00000"
 }
 ```
 
@@ -49,4 +50,36 @@ Use `--safe` if serial upload is unreliable.
 
 ## Next work
 
-OpenSBI source is not vendored in this repository yet. The next step is to bring in a reproducible OpenSBI/Linux/Buildroot flow, preferably derived from `linux-on-litex-vexriscv`, and verify the correct LiteX/VexRiscv platform target and RV32 toolchain.
+OpenSBI source is not vendored in git history, but `scripts/bootstrap_linux_on_litex.sh` clones the reference `linux-on-litex-vexriscv`, Buildroot, and the matching `litex-hub/opensbi` branch under ignored `third_party/`.
+
+
+## Verified OpenSBI-only smoke test
+
+The helper scripts now build the OpenSBI jump image and DTB:
+
+```bash
+./scripts/build_opensbi_litex.sh
+./scripts/build_litex_dtb.sh
+```
+
+`build_opensbi_litex.sh` uses Vivado 2025.2's bundled RISC-V GCC and overrides the OpenSBI ISA string to `rv32ima_zicsr_zifencei`, which is required by newer GCC/binutils for CSR/fence instructions.
+
+With the Linux-capable LiteX bitstream programmed, this command uploads only DTB + OpenSBI and exits once the OpenSBI banner appears:
+
+```bash
+./scripts/boot_opensbi_only.sh /dev/ttyUSB1 --safe
+```
+
+Observed hardware result:
+
+```text
+[LITEX-TERM] Uploading .../rv32.dtb to 0x40ef0000
+[LITEX-TERM] Uploading .../opensbi.bin to 0x40f00000
+Executing booted program at 0x40f00000
+OpenSBI
+```
+
+This validates the LiteX serial loader, DTB address, OpenSBI link/load address, and M-mode firmware entry. Linux kernel/rootfs are the next step.
+
+
+Before re-running this smoke test after a successful OpenSBI jump, reprogram the Linux-capable LiteX bitstream or press the FPGA reset button so the LiteX BIOS boot menu is emitted again. The automatic `--serial-boot` handshake is emitted by the LiteX BIOS during the short boot window, not by OpenSBI. If the board is already at the `litex>` prompt, the manual command is `serialboot`, but automation can miss its short magic prompt.

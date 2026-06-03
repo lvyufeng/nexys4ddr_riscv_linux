@@ -117,12 +117,13 @@ This bitstream has been built successfully, routed timing is met, programmed to 
 ```json
 {
   "Image": "0x40000000",
+  "rv32.dtb": "0x40ef0000",
   "rootfs.cpio": "0x41000000",
-  "fw_jump.bin": "0x40f00000"
+  "opensbi.bin": "0x40f00000"
 }
 ```
 
-Keep `fw_jump.bin` last so LiteX jumps to OpenSBI. A template is checked in at:
+Keep `opensbi.bin` last so LiteX jumps to OpenSBI. The DTB address `0x40ef0000` matches the Linux-on-LiteX-VexRiscv reference `boot_ram0.json`. A template is checked in at:
 
 ```text
 linux/images/litex_vexriscv_smp_images.example.json
@@ -133,3 +134,21 @@ Then run:
 ```bash
 .venv/bin/litex_term /dev/ttyUSB1   --speed 115200   --serial-boot   --images linux/images/litex_vexriscv_smp_images.json
 ```
+
+## OpenSBI-only hardware validation
+
+The current board has successfully uploaded and entered OpenSBI through LiteX serial boot:
+
+```text
+rv32.dtb     -> 0x40ef0000
+opensbi.bin  -> 0x40f00000
+jump target  -> 0x40f00000
+```
+
+Observed marker:
+
+```text
+OpenSBI
+```
+
+The next missing artifacts are the Linux `Image` and `rootfs.cpio`.

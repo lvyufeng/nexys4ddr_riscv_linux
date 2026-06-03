@@ -87,8 +87,32 @@ For the current LiteX/VexRiscvSMP map, load images as:
 
 ```text
 Linux Image:  0x40000000
+rv32.dtb:      0x40ef0000
 rootfs.cpio:  0x41000000
-OpenSBI jump: 0x40f00000
+OpenSBI image: 0x40f00000
 ```
 
 Use `linux/images/litex_vexriscv_smp_images.example.json` as the template for `litex_term --images`. Keep OpenSBI last in the JSON object so LiteX jumps to OpenSBI after all images are uploaded.
+
+
+## OpenSBI-only validation
+
+OpenSBI-only boot has been verified on hardware with the Linux-capable LiteX/VexRiscvSMP bitstream:
+
+```bash
+./scripts/build_opensbi_litex.sh
+./scripts/build_litex_dtb.sh
+./scripts/boot_opensbi_only.sh /dev/ttyUSB1 --safe
+```
+
+Expected/observed milestone:
+
+```text
+Executing booted program at 0x40f00000
+OpenSBI
+```
+
+This confirms the M-mode firmware path before adding a Linux kernel and initramfs.
+
+
+Before re-running this smoke test after a successful OpenSBI jump, reprogram the Linux-capable LiteX bitstream or press the FPGA reset button so the LiteX BIOS boot menu is emitted again. The automatic `--serial-boot` handshake is emitted by the LiteX BIOS during the short boot window, not by OpenSBI. If the board is already at the `litex>` prompt, the manual command is `serialboot`, but automation can miss its short magic prompt.
