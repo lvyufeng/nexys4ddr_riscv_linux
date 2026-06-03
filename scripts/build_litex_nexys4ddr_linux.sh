@@ -85,6 +85,30 @@ python3 third_party/litex/litex/tools/litex_json2dts_linux.py \
   --root-device "${ROOT_DEVICE:-ram0}" \
   > "$OUT_DIR/digilent_nexys4ddr_linux.dts"
 
+# The Nexys4 DDR LedChaser drives all 16 board user LEDs, but litex_json2dts
+# defaults litex,ngpio to 4 when the CSR JSON has no leds_ngpio constant. Patch
+# the generated &leds node so Linux exposes all 16 LED outputs. Override with
+# LITEX_LEDS_NGPIO for boards/variants with a different LED count.
+python3 - "$OUT_DIR/digilent_nexys4ddr_linux.dts" "${LITEX_LEDS_NGPIO:-16}" <<'PY'
+import re
+import sys
+from pathlib import Path
+path, ngpio = sys.argv[1], int(sys.argv[2])
+text = Path(path).read_text()
+new, n = re.subn(
+    r"(&leds\s*\{.*?litex,ngpio\s*=\s*<)\d+(>)",
+    lambda m: m.group(1) + str(ngpio) + m.group(2),
+    text,
+    count=1,
+    flags=re.DOTALL,
+)
+if n:
+    Path(path).write_text(new)
+    print(f"Patched &leds litex,ngpio = <{ngpio}>")
+else:
+    print("warning: &leds litex,ngpio not found; left DTS unchanged", file=sys.stderr)
+PY
+
 printf '\nLiteX Nexys4 DDR Linux-capable build complete. Output directory: %s\n' "$OUT_DIR"
 printf 'LiteX UART baudrate: %s\n' "$UART_BAUDRATE"
 printf 'LiteX extra args: %s\n' "${EXTRA_LITEX_ARGS[*]:-(none)}"

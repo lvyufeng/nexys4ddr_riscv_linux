@@ -41,6 +41,11 @@ fi
   ./utils/config --file .config --enable BR2_PACKAGE_DROPBEAR
   ./utils/config --file .config --set-str BR2_TARGET_GENERIC_ROOT_PASSWD "${BR_ROOT_PASSWORD:-root}"
 
+  # Install libgpiod command-line tools so board GPIO peripherals can be exercised
+  # directly from the SD-root shell/SSH session (gpioinfo/gpioset/gpioget).
+  ./utils/config --file .config --enable BR2_PACKAGE_LIBGPIOD
+  ./utils/config --file .config --enable BR2_PACKAGE_LIBGPIOD_TOOLS
+
   # Keep the serial-loaded initramfs compact. At 115200 baud, the raw CPIO
   # rootfs dominates upload time; gzip typically cuts it by several MiB and is
   # supported by the kernel config via CONFIG_RD_GZIP=y.

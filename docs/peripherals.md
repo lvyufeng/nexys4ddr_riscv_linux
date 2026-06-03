@@ -27,6 +27,43 @@ Preferred Linux exposure:
 - switches: GPIO inputs, readable through libgpiod
 - 7-segment: initially simple MMIO or GPIO mapping, later a proper driver if needed
 
+### User LED status (verified)
+
+The LiteX `LedChaser` drives all 16 Nexys4 DDR user LEDs, exposed as a single
+`litex,gpio` output controller. `litex_json2dts` defaults `litex,ngpio` to 4 when
+the CSR JSON has no `leds_ngpio` constant, so the build/probe wrappers now patch
+the generated `&leds` node to 16 (override with `LITEX_LEDS_NGPIO`). The
+checked-in DTS files match.
+
+Linux exposes the LEDs through the GPIO character device, not the legacy
+`/sys/class/gpio` sysfs interface:
+
+```text
+/dev/gpiochip0
+/sys/devices/platform/soc/f0003800.gpio
+driver: litex-gpio
+litex,ngpio = <16>  (0x10)
+```
+
+Hardware smoke test from the SD-root shell drove all 16 lines through a chaser
+plus `0xffff`/`0xaaaa`/`0x5555` patterns:
+
+```text
+GPIO_CHIP name=gpiochip0 label=litex_gpio lines=16
+LED_PATTERN=0x0001 ... 0x8000
+LED_PATTERN=0xffff / 0xaaaa / 0x5555
+LED_GPIO_TEST_OK
+```
+
+The Buildroot image now installs the `libgpiod` tools, so the LEDs can also be
+driven directly over SSH, for example:
+
+```bash
+gpioinfo gpiochip0
+gpioset gpiochip0 0=1 1=0 2=1 ...
+```
+
+
 ## Storage / SPI-class peripherals
 
 Candidate devices:

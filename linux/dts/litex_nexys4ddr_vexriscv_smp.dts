@@ -177,7 +177,7 @@
 };
 
 &leds {
-        litex,ngpio = <4>;
+        litex,ngpio = <16>;
         status = "okay";
 };
 

@@ -41,6 +41,10 @@ password: root
 
 Override it for local builds with `BR_ROOT_PASSWORD=... ./scripts/build_buildroot_litex.sh`.
 
+The helper also enables the `libgpiod` command-line tools (`gpioinfo`,
+`gpioget`, `gpioset`, ...) so board GPIO peripherals such as the user LEDs can be
+driven directly from the SD-root shell or over SSH.
+
 ## Current address contract
 
 The generated LiteX/VexRiscvSMP DTS expects serial-loaded images at:
