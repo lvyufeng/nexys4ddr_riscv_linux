@@ -27,7 +27,7 @@ fi
   --speed "${LITEX_BAUD:-1000000}" \
   --images "$IMAGES" \
   --chunk-size "${LITEX_SFL_CHUNK:-251}" \
-  --ack-window "${LITEX_SFL_ACK_WINDOW:-64}" \
+  --ack-window "${LITEX_SFL_ACK_WINDOW:-8}" \
   --loader-timeout "${LITEX_LOADER_TIMEOUT:-30}" \
   --console-timeout "${LITEX_CONSOLE_TIMEOUT:-600}" \
   --exit-on "${LITEX_EXIT_ON:-buildroot login:}" \

@@ -62,12 +62,29 @@ mount | grep mmc
 umount /mnt/sd
 ```
 
+The card is now also prepared as a two-partition Linux rootfs card:
+
+```text
+/dev/mmcblk0p1  VFAT  LITEXBOOT   boot payload copy
+/dev/mmcblk0p2  ext4  LITEXROOT   Buildroot rootfs
+```
+
+SD-root boot is verified with `rv32_sdroot.dtb`:
+
+```text
+Kernel command line: console=liteuart earlycon=liteuart,0xf0001000 rootwait root=/dev/mmcblk0p2 rootfstype=ext4 rw
+/dev/root on / type ext4 (rw,relatime)
+hostname: litex-sdroot
+```
+
+The serial loader now only uploads `Image`, `rv32_sdroot.dtb`, and `opensbi.bin`
+for this path; the rootfs data is read from SD.
+
 Next storage steps:
 
-- prepare a dedicated SD-card partition layout on the host PC;
-- copy a rootfs or boot payloads to SD;
-- update bootargs / boot flow so large rootfs data no longer has to be
-  uploaded over serial.
+- optionally copy future kernel/DTB/OpenSBI artifacts from `/dev/mmcblk0p1`
+  instead of serial-uploading them;
+- consider native 4-bit SD mode later if SPI-mode throughput becomes a blocker.
 
 ## Display
 
@@ -88,4 +105,25 @@ Treat these as later work:
 
 ## USB / Ethernet
 
-Do not implement from scratch in the first phases. If needed, prefer an existing LiteX/third-party MAC or controller with Linux driver support.
+Do not implement from scratch in the first phases. Prefer an existing LiteX MAC or
+third-party controller with Linux driver support.
+
+Recommended Ethernet bring-up after SD-root:
+
+1. Use LiteX's Nexys4 DDR Ethernet option for the board PHY if available, and
+   regenerate the Linux metadata (`csr.json`/DTS) with Ethernet enabled.
+2. Confirm the generated CSR base, interrupt, PHY reset/MDIO wiring, and DTS node.
+3. Enable the matching Linux network driver in `linux/configs/litex_nexys4ddr_linux.config`.
+4. Rebuild the bitstream and kernel, then boot from the already-working SD-root
+   path so networking is debugged independently of rootfs upload.
+5. Hardware smoke tests:
+
+```bash
+dmesg | grep -Ei 'eth|liteeth|mdio|phy'
+ip link
+ip link set eth0 up
+udhcpc -i eth0
+ping -c 3 <gateway-ip>
+```
+
+After basic `eth0` works, TFTP/NFS boot can be considered as a separate boot-media milestone.

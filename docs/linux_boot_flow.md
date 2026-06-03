@@ -80,22 +80,36 @@ PLIC:       0xf0c00000
 ```
 
 The OpenSBI/Linux/rootfs artifacts now match this generated/local DTS, including
-SPI-mode microSD. The card is currently a Linux block device (`/dev/mmcblk0`),
-not yet the primary boot/root filesystem.
+SPI-mode microSD. The card is verified both as a Linux block device
+(`/dev/mmcblk0`) and, with the SD-root DTB, as the primary ext4 root filesystem
+(`/dev/mmcblk0p2`).
 
 
 ## Serial loader address plan
 
-For the current LiteX/VexRiscvSMP map, load images as:
+For the current LiteX/VexRiscvSMP map, the initramfs path loads images as:
 
 ```text
-Linux Image:  0x40000000
-rv32.dtb:      0x40ef0000
+Linux Image:    0x40000000
+rv32.dtb:       0x40ef0000
 rootfs.cpio.gz: 0x41000000
-OpenSBI image: 0x40f00000
+OpenSBI image:  0x40f00000
 ```
 
-Use `linux/images/litex_vexriscv_smp_images.example.json` as the template for `litex_term --images`. Keep OpenSBI last in the JSON object so LiteX jumps to OpenSBI after all images are uploaded.
+Use `linux/images/litex_vexriscv_smp_images.example.json` as the template. Keep
+OpenSBI last in the JSON object so LiteX jumps to OpenSBI after all images are
+uploaded.
+
+The SD-root path keeps rootfs on the card and serial-loads only:
+
+```text
+Linux Image:     0x40000000
+rv32_sdroot.dtb: 0x40ef0000
+OpenSBI image:   0x40f00000
+```
+
+Generate this map with `./scripts/prepare_litex_sdroot_images.sh` and boot with
+`./scripts/boot_litex_linux_sdroot_serial.sh /dev/ttyUSB1`.
 
 
 ## OpenSBI-only validation

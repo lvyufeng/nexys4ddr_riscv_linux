@@ -87,16 +87,35 @@ Enable:
 
 Current microSD status: SPI-mode board microSD is enabled in the Linux-capable
 LiteX bitstream by default and verified on hardware. Linux enumerates the card as
-`/dev/mmcblk0` and its first partition as `/dev/mmcblk0p1`; an 8 GB SDHC card was
-mounted read-only as VFAT.
+`/dev/mmcblk0`; an 8 GB SDHC card has a VFAT boot partition and an ext4 rootfs
+partition. The SD-root path is verified with `/dev/mmcblk0p2` mounted as `/` and
+hostname `litex-sdroot`.
 
 Acceptance:
 
 ```bash
 dmesg | grep -Ei 'mmc|spi'
 cat /proc/partitions
-ls -l /dev/mmcblk0 /dev/mmcblk0p1
-mount -o ro /dev/mmcblk0p1 /mnt/sd
+ls -l /dev/mmcblk0 /dev/mmcblk0p1 /dev/mmcblk0p2
+cat /proc/cmdline
+mount | grep ' / '
+```
+
+## Stage 4b: Ethernet / networking
+
+After SD-root, Ethernet is the next useful Linux peripheral because it enables
+package/file transfer and later TFTP/NFS boot experiments. Keep the SD-root card
+as the known-good rootfs while adding Ethernet, so failures are isolated to the
+MAC/PHY/DTS/driver path.
+
+Acceptance:
+
+```bash
+dmesg | grep -Ei 'eth|liteeth|mdio|phy'
+ip link
+ip link set eth0 up
+udhcpc -i eth0
+ping -c 3 <gateway-ip>
 ```
 
 ## Stage 5: VGA framebuffer

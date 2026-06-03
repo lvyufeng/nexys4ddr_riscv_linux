@@ -46,6 +46,7 @@ linux/images/Image
 linux/images/rootfs.cpio
 linux/images/rootfs.cpio.gz
 linux/images/litex_vexriscv_smp_images.json
+linux/images/rv32_sdroot.dtb
 
 # Generated local mirror of third-party Buildroot patches
 /local_patches/

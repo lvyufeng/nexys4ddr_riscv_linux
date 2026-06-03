@@ -96,7 +96,7 @@ The Stage 1 reference path uses LiteX's upstream Nexys4 DDR target to prove boar
 
 The probe should generate `build/litex_nexys4ddr_probe/` with `csr.json`, `csr.csv`, `memory.x`, and gateware source/TCL/XDC files. Full bitstream/BIOS build requires Vivado plus a RISC-V cross compiler. The build script automatically adds Vivado 2025.2's bundled `riscv64-unknown-elf-gcc` path when present.
 
-Current Stage 1 status: both the minimal LiteX bitstream and the Linux-capable VexRiscvSMP bitstream build with routed timing met, program successfully, and reach the LiteX BIOS UART prompt (`litex>`). OpenSBI + Linux 6.9 + Buildroot have also been serial-loaded into DDR and verified on hardware to reach `buildroot login:` and a root shell. The Linux-capable bitstream now includes the board microSD slot in SPI mode; Linux detects an inserted 8 GB SDHC card as `/dev/mmcblk0` and can mount its first partition.
+Current Stage 1 status: both the minimal LiteX bitstream and the Linux-capable VexRiscvSMP bitstream build with routed timing met, program successfully, and reach the LiteX BIOS UART prompt (`litex>`). OpenSBI + Linux 6.9 + Buildroot have also been serial-loaded into DDR and verified on hardware to reach `buildroot login:` and a root shell. The Linux-capable bitstream now includes the board microSD slot in SPI mode; an 8 GB SDHC card is prepared with a VFAT boot partition and ext4 root partition, and Linux has booted with `/dev/mmcblk0p2` mounted as `/`.
 
 Vivado environment example:
 
@@ -112,11 +112,23 @@ The current reference boot path is:
 
 ```text
 LiteX BIOS / serial SFL loader
-  -> Image       @ 0x40000000
-  -> rv32.dtb    @ 0x40ef0000
+  -> Image          @ 0x40000000
+  -> rv32.dtb       @ 0x40ef0000
   -> rootfs.cpio.gz @ 0x41000000
-  -> opensbi.bin @ 0x40f00000
+  -> opensbi.bin    @ 0x40f00000
   -> Buildroot login/root shell
+```
+
+A second verified boot path keeps only the kernel, DTB, and OpenSBI on the serial
+loader and mounts the root filesystem from the board microSD card:
+
+```text
+LiteX BIOS / serial SFL loader
+  -> Image           @ 0x40000000
+  -> rv32_sdroot.dtb @ 0x40ef0000
+  -> opensbi.bin     @ 0x40f00000
+  -> root=/dev/mmcblk0p2 rootfstype=ext4 rw
+  -> litex-sdroot login/root shell
 ```
 
 Build and collect software images:
@@ -131,6 +143,14 @@ Then program the Linux-capable bitstream and boot over serial:
 ```bash
 ./scripts/program_litex_nexys4ddr.sh build/litex_nexys4ddr_linux/gateware/digilent_nexys4ddr.bit
 ./scripts/boot_litex_linux_serial.sh /dev/ttyUSB1
+```
+
+For the SD-root path, prepare the SD-root DTB/image map and boot without uploading
+`rootfs.cpio.gz`:
+
+```bash
+./scripts/prepare_litex_sdroot_images.sh
+./scripts/boot_litex_linux_sdroot_serial.sh /dev/ttyUSB1
 ```
 
 `boot_litex_linux_serial.sh` uses `scripts/serial_boot_litex_images.py`, a
@@ -149,9 +169,17 @@ mmcblk0: mmc0:0000 SL08G 7.40 GiB
  mmcblk0: p1
 ```
 
-`/dev/mmcblk0p1` mounted read-only as VFAT in the hardware smoke test. Moving
-rootfs or boot payloads onto SD is the next storage milestone; Ethernet/TFTP/NFS
-remains another long-term boot-media path.
+`/dev/mmcblk0p1` mounted read-only as VFAT in the first hardware smoke test. The
+same 8 GB card is now prepared as:
+
+```text
+/dev/mmcblk0p1  VFAT  LITEXBOOT   boot payload copy
+/dev/mmcblk0p2  ext4  LITEXROOT   Buildroot rootfs
+```
+
+The SD-root smoke test passed with hostname `litex-sdroot`, kernel command line
+`root=/dev/mmcblk0p2 rootfstype=ext4 rw`, and `/dev/root on / type ext4`.
+Ethernet/TFTP/NFS remains a later boot-media path.
 
 ## Relationship to `step_into_mips`
 

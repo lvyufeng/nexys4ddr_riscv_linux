@@ -169,7 +169,19 @@ The Linux-capable LiteX bitstream defaults to 1,000,000 baud and the serial
 image map now uses `rootfs.cpio.gz`. Progress is printed once per second and the
 UART log is written to `/tmp/boot_litex_linux_serial.log` by default. For an
 older 115200-baud bitstream, set `LITEX_BAUD=115200` when running the boot
-wrapper.
+wrapper. The default SFL ACK window is conservative; use
+`LITEX_SFL_ACK_WINDOW=64` on stable USB links for maximum upload throughput.
+
+The SD-root variant uses the same kernel/OpenSBI artifacts but does not upload
+`rootfs.cpio.gz`:
+
+```bash
+./scripts/prepare_litex_sdroot_images.sh
+./scripts/boot_litex_linux_sdroot_serial.sh /dev/ttyUSB1
+```
+
+It loads `rv32_sdroot.dtb`, whose bootargs mount `/dev/mmcblk0p2` as the ext4
+root filesystem.
 
 
 ## SPI microSD smoke test

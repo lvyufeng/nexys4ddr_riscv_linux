@@ -27,14 +27,17 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if [ -z "${INITRD_IMAGE:-}" ] && [ -f linux/images/rootfs.cpio.gz ]; then
+if [ "${INITRD_IMAGE:-}" = "none" ]; then
+  INITRD_IMAGE=
+elif [ -z "${INITRD_IMAGE:-}" ] && [ -f linux/images/rootfs.cpio.gz ] && grep -q "linux,initrd-end" "$DTS"; then
   INITRD_IMAGE=linux/images/rootfs.cpio.gz
 fi
 
 # When INITRD_IMAGE is provided, patch linux,initrd-end to the exact loaded
 # file end. This matters for gzip-compressed initramfs images: using a much
 # larger static window can make Linux inspect unrelated DDR bytes after the
-# compressed stream.
+# compressed stream. Set INITRD_IMAGE=none for DTBs that intentionally boot
+# from a block-device rootfs and do not contain linux,initrd-* properties.
 if [ -n "${INITRD_IMAGE:-}" ]; then
   if [ ! -f "$INITRD_IMAGE" ]; then
     echo "Missing INITRD_IMAGE: $INITRD_IMAGE" >&2

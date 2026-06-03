@@ -25,6 +25,7 @@ import time
 from pathlib import Path
 
 import serial
+from serial import SerialException
 
 SFL_PROMPT_REQ = b"F7:    boot from serial\n"
 SFL_PROMPT_ACK = b"\x06"
@@ -101,6 +102,7 @@ class SerialBooter:
         self.ser = serial.Serial(port, speed, timeout=0.05, write_timeout=2.0)
         self.log = open(log_path, "ab", buffering=0) if log_path else None
         self.recent = bytearray()
+        self.serial_failed = False
 
     def close(self) -> None:
         if self.log:
@@ -120,7 +122,12 @@ class SerialBooter:
             del self.recent[:-4096]
 
     def read_some(self, echo: bool = True) -> bytes:
-        data = self.ser.read(4096)
+        try:
+            data = self.ser.read(4096)
+        except SerialException as e:
+            self.serial_failed = True
+            print(f"\n[SFL] Serial read failed: {e}", flush=True)
+            return b""
         self._record(data, echo=echo)
         return data
 
@@ -178,11 +185,14 @@ class SerialBooter:
 
     def read_ack(self, timeout: float = 2.0) -> bytes:
         old_timeout = self.ser.timeout
-        self.ser.timeout = timeout
+        changed_timeout = old_timeout != timeout
+        if changed_timeout:
+            self.ser.timeout = timeout
         try:
             reply = self.ser.read(1)
         finally:
-            self.ser.timeout = old_timeout
+            if changed_timeout:
+                self.ser.timeout = old_timeout
         if not reply:
             raise TimeoutError("Timed out waiting for SFL ACK")
         return reply
@@ -243,28 +253,33 @@ class SerialBooter:
                 print(f"[SFL]   {path.name}: {sent}/{size} bytes ({pct:5.1f}%, {rate:5.1f} KiB/s)", flush=True)
                 last_report = now
 
-        with path.open("rb") as f:
-            current = address
-            pending: list[bytes] = []
-            pending_bytes = 0
-            while True:
-                chunk = f.read(chunk_size)
-                if not chunk:
-                    break
-                pending.append(encode_frame(SFL_CMD_LOAD, current.to_bytes(4, "big") + chunk))
-                current += len(chunk)
-                pending_bytes += len(chunk)
-                if len(pending) >= ack_window:
+        old_timeout = self.ser.timeout
+        self.ser.timeout = 2.0
+        try:
+            with path.open("rb") as f:
+                current = address
+                pending: list[bytes] = []
+                pending_bytes = 0
+                while True:
+                    chunk = f.read(chunk_size)
+                    if not chunk:
+                        break
+                    pending.append(encode_frame(SFL_CMD_LOAD, current.to_bytes(4, "big") + chunk))
+                    current += len(chunk)
+                    pending_bytes += len(chunk)
+                    if len(pending) >= ack_window:
+                        self.send_encoded_frames(pending)
+                        sent += pending_bytes
+                        pending = []
+                        pending_bytes = 0
+                        report()
+
+                if pending:
                     self.send_encoded_frames(pending)
                     sent += pending_bytes
-                    pending = []
-                    pending_bytes = 0
-                    report()
-
-            if pending:
-                self.send_encoded_frames(pending)
-                sent += pending_bytes
-                report(force=True)
+                    report(force=True)
+        finally:
+            self.ser.timeout = old_timeout
         elapsed = time.monotonic() - start
         print(f"[SFL] Upload complete: {path.name} ({size / max(elapsed, 1e-6) / 1024.0:.1f} KiB/s).", flush=True)
 
@@ -278,6 +293,9 @@ class SerialBooter:
         seen = bytearray()
         while time.monotonic() < deadline:
             data = self.read_some(echo=True)
+            if self.serial_failed:
+                print("\n[SFL] Console capture stopped after serial read failure.", flush=True)
+                return False
             if data:
                 seen.extend(data)
                 if len(seen) > max(4096, len(marker or b"")):
@@ -313,7 +331,7 @@ def main() -> int:
     parser.add_argument("--speed", type=int, default=1000000)
     parser.add_argument("--images", required=True)
     parser.add_argument("--chunk-size", type=int, default=251, help="SFL data bytes per load frame, max 251")
-    parser.add_argument("--ack-window", type=int, default=64, help="number of SFL load frames to send before draining ACKs")
+    parser.add_argument("--ack-window", type=int, default=8, help="number of SFL load frames to send before draining ACKs")
     parser.add_argument("--safe", action="store_true", help="use one-frame ACK windows for maximum compatibility")
     parser.add_argument("--loader-timeout", type=float, default=30.0)
     parser.add_argument("--console-timeout", type=float, default=300.0)

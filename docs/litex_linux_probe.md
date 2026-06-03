@@ -233,8 +233,34 @@ mmcblk0: mmc0:0000 SL08G 7.40 GiB
 ```
 
 The initial smoke test used a read-only mount to avoid modifying the user's
-existing card contents. Preparing an ext4 rootfs partition on SD is the next
-storage milestone.
+existing card contents. The same 8 GB card was then prepared on the host as:
+
+```text
+/dev/mmcblk0p1  VFAT  LITEXBOOT   boot payload copy
+/dev/mmcblk0p2  ext4  LITEXROOT   Buildroot rootfs
+```
+
+A dedicated SD-root DTB (`linux/images/rv32_sdroot.dtb`) removes the initrd
+properties and uses:
+
+```text
+console=liteuart earlycon=liteuart,0xf0001000 rootwait root=/dev/mmcblk0p2 rootfstype=ext4 rw
+```
+
+The SD-root serial boot uploads only `Image`, `rv32_sdroot.dtb`, and
+`opensbi.bin`. Hardware verification passed:
+
+```text
+litex-sdroot login:
+root@litex-sdroot:~# hostname
+litex-sdroot
+root@litex-sdroot:~# mount | grep ' / '
+/dev/root on / type ext4 (rw,relatime)
+root@litex-sdroot:~# cat /proc/partitions
+179 0 7761920 mmcblk0
+179 1  262144 mmcblk0p1
+179 2 7498752 mmcblk0p2
+```
 
 Known boot-log warnings to clean up later:
 
