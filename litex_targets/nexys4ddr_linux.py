@@ -6,11 +6,45 @@ peripherals that are not instantiated by the upstream target yet. Keeping this i
 repo avoids editing the ignored third_party/litex-boards checkout.
 """
 
-from migen import Cat
+from migen import Cat, ClockDomain, Signal
 
+from litex.gen import LiteXModule
 from litex_boards.targets import digilent_nexys4ddr
+from litex.soc.cores.clock import S7IDELAYCTRL, S7MMCM
 from litex.soc.cores.gpio import GPIOIn, GPIOOut
+from litex.soc.cores.video import VideoVGAPHY, video_timings
 from litex.soc.integration.builder import Builder
+
+
+def video_pix_clk(timing):
+    if timing not in video_timings:
+        available = ", ".join(sorted(video_timings))
+        raise ValueError(f"unsupported video timing {timing!r}; available: {available}")
+    return video_timings[timing]["pix_clk"]
+
+
+class LocalCRG(LiteXModule):
+    def __init__(self, platform, sys_clk_freq, vga_clk_freq=40e6):
+        self.rst          = Signal()
+        self.cd_sys       = ClockDomain()
+        self.cd_sys2x     = ClockDomain()
+        self.cd_sys2x_dqs = ClockDomain()
+        self.cd_idelay    = ClockDomain()
+        self.cd_eth       = ClockDomain()
+        self.cd_vga       = ClockDomain()
+
+        self.pll = pll = S7MMCM(speedgrade=-1)
+        self.comb += pll.reset.eq(~platform.request("cpu_reset_n") | self.rst)
+        pll.register_clkin(platform.request("clk100"), 100e6)
+        pll.create_clkout(self.cd_sys,       sys_clk_freq)
+        pll.create_clkout(self.cd_sys2x,     2*sys_clk_freq)
+        pll.create_clkout(self.cd_sys2x_dqs, 2*sys_clk_freq, phase=90)
+        pll.create_clkout(self.cd_idelay,    200e6)
+        pll.create_clkout(self.cd_eth,       50e6)
+        pll.create_clkout(self.cd_vga,       vga_clk_freq)
+        platform.add_false_path_constraints(self.cd_sys.clk, pll.clkin)
+
+        self.idelayctrl = S7IDELAYCTRL(self.cd_idelay)
 
 
 class LocalSoC(digilent_nexys4ddr.BaseSoC):
@@ -21,9 +55,38 @@ class LocalSoC(digilent_nexys4ddr.BaseSoC):
         with_buttons=False,
         with_rgb_leds=False,
         with_seven_seg=False,
+        with_video_terminal=False,
+        with_video_framebuffer=False,
+        video_timing="800x600@60Hz",
+        sys_clk_freq=75e6,
         **kwargs,
     ):
-        super().__init__(*args, **kwargs)
+        # The upstream Nexys4 DDR target hardcodes a 40 MHz VGA clock and
+        # 800x600@60Hz. Keep local video timing configurable so hardware tests can
+        # use conservative monitor-compatible modes such as 640x480@60Hz.
+        vga_clk_freq = video_pix_clk(video_timing)
+        upstream_crg = digilent_nexys4ddr._CRG
+        digilent_nexys4ddr._CRG = lambda platform, sys_clk_freq: LocalCRG(
+            platform, sys_clk_freq, vga_clk_freq=vga_clk_freq)
+        try:
+            super().__init__(
+                *args,
+                sys_clk_freq=sys_clk_freq,
+                with_video_terminal=False,
+                with_video_framebuffer=False,
+                **kwargs,
+            )
+        finally:
+            digilent_nexys4ddr._CRG = upstream_crg
+
+        if with_video_terminal or with_video_framebuffer:
+            self.videophy = VideoVGAPHY(self.platform.request("vga"), clock_domain="vga")
+            if with_video_terminal:
+                self.add_video_terminal(phy=self.videophy, timings=video_timing, clock_domain="vga")
+            if with_video_framebuffer:
+                self.add_video_framebuffer(phy=self.videophy, timings=video_timing, clock_domain="vga")
+            self.add_constant("video_timing", video_timing)
+            self.add_constant("video_pix_clk", int(vga_clk_freq))
 
         if with_switches:
             self.switches = GPIOIn(self.platform.request_all("user_sw"), with_irq=True)
@@ -77,6 +140,7 @@ def main():
     viopts = parser.target_group.add_mutually_exclusive_group()
     viopts.add_argument("--with-video-terminal", action="store_true", help="Enable Video Terminal (VGA).")
     viopts.add_argument("--with-video-framebuffer", action="store_true", help="Enable Video Framebuffer (VGA).")
+    parser.add_target_argument("--video-timing", default="800x600@60Hz", help="LiteX video timing preset, e.g. 640x480@60Hz or 800x600@60Hz.")
     parser.add_target_argument("--with-switches", action="store_true", help="Expose 16 board switches as LiteX GPIO inputs.")
     parser.add_target_argument("--with-buttons", action="store_true", help="Expose 5 board buttons as LiteX GPIO inputs.")
     parser.add_target_argument("--with-rgb-leds", action="store_true", help="Expose the two RGB LEDs as 6 LiteX GPIO outputs.")
@@ -92,6 +156,7 @@ def main():
         remote_ip=args.remote_ip,
         with_video_terminal=args.with_video_terminal,
         with_video_framebuffer=args.with_video_framebuffer,
+        video_timing=args.video_timing,
         with_switches=args.with_switches,
         with_buttons=args.with_buttons,
         with_rgb_leds=args.with_rgb_leds,

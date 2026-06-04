@@ -12,6 +12,7 @@ fi
 source .venv/bin/activate
 
 OUT_DIR=${1:-build/litex_nexys4ddr_linux_probe}
+SYS_CLK_FREQ=${LITEX_SYS_CLK_FREQ:-75e6}
 LITEX_TARGET_MODULE=${LITEX_TARGET_MODULE:-litex_targets.nexys4ddr_linux}
 EXTRA_LITEX_ARGS=()
 if [ "${LITEX_WITH_SPI_SDCARD:-1}" = "1" ] && [ "${LITEX_WITH_SDCARD:-0}" = "1" ]; then
@@ -53,6 +54,22 @@ fi
 if [ "${LITEX_WITH_SEVEN_SEG:-1}" = "1" ]; then
   EXTRA_LITEX_ARGS+=(--with-seven-seg)
 fi
+
+# VGA is resource/timing heavier than simple GPIO, so keep it opt-in per build.
+# LiteX exposes terminal and framebuffer modes as mutually exclusive target args.
+if [ "${LITEX_WITH_VIDEO_TERMINAL:-0}" = "1" ] && [ "${LITEX_WITH_VIDEO_FRAMEBUFFER:-0}" = "1" ]; then
+  echo "LITEX_WITH_VIDEO_TERMINAL and LITEX_WITH_VIDEO_FRAMEBUFFER are mutually exclusive." >&2
+  exit 1
+fi
+if [ "${LITEX_WITH_VIDEO_TERMINAL:-0}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-video-terminal)
+fi
+if [ "${LITEX_WITH_VIDEO_FRAMEBUFFER:-0}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-video-framebuffer)
+fi
+if [ "${LITEX_WITH_VIDEO_TERMINAL:-0}" = "1" ] || [ "${LITEX_WITH_VIDEO_FRAMEBUFFER:-0}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--video-timing "${LITEX_VIDEO_TIMING:-800x600@60Hz}")
+fi
 rm -rf "$OUT_DIR"
 mkdir -p "$OUT_DIR"
 
@@ -64,6 +81,7 @@ python3 -m "$LITEX_TARGET_MODULE" \
   --cpu-variant=linux \
   --cpu-count="${CPU_COUNT:-1}" \
   --hardware-breakpoints=0 \
+  --sys-clk-freq="$SYS_CLK_FREQ" \
   "${EXTRA_LITEX_ARGS[@]}" \
   --build \
   --no-compile \

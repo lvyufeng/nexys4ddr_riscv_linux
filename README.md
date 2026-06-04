@@ -223,6 +223,35 @@ seven-segment display are also enabled as simple GPIO output controllers:
 The RGB LED channels and seven-segment digit scan were verified over SSH with a
 GPIO character-UAPI helper. See [`docs/peripherals.md`](docs/peripherals.md).
 
+A conservative VGA framebuffer build is now hardware-verified at
+`640x480@60Hz`. The local LiteX target keeps video opt-in and allows the timing
+preset to be selected per build, since the upstream Nexys4 DDR target hardcodes a
+40 MHz VGA clock and `800x600@60Hz`.
+
+```bash
+LITEX_WITH_VIDEO_FRAMEBUFFER=1 \
+LITEX_VIDEO_TIMING='640x480@60Hz' \
+LITEX_SYS_CLK_FREQ=60e6 \
+./scripts/build_litex_nexys4ddr_linux.sh build/litex_nexys4ddr_linux_vga_fb_640x480_60mhz
+```
+
+The verified bitstream met timing and generated a 25.087 MHz VGA clock. A BIOS
+level smoke test then filled the framebuffer at `0x47e00000`, programmed the
+LiteX VideoTimingGenerator and DMA CSRs, and displayed both a white screen and
+horizontal color bars on the VGA monitor. This proves the board VGA pins, pixel
+clock, sync timing, DDR framebuffer path, and LiteX video DMA before adding a
+Linux framebuffer console or GUI stack.
+
+```bash
+./scripts/vga_bios_test_640x480.py --mode white
+./scripts/vga_bios_test_640x480.py --mode bars
+```
+
+The monitor/USB setup used during bring-up was sensitive to VGA/USB power or
+cable disturbance: if the Digilent FTDI interface re-enumerates and Vivado later
+reports `DONE status = 0`, reprogram the bitstream before rerunning the BIOS VGA
+smoke test.
+
 ## Relationship to `step_into_mips`
 
 The completed `step_into_mips` repository can be used as board bring-up reference for:

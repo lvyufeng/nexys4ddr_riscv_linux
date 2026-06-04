@@ -236,11 +236,88 @@ Next storage steps:
 
 ## Display
 
-Use simple framebuffer first:
+### VGA framebuffer status (verified at 640x480@60Hz)
 
-- VGA timing generator in RTL;
-- framebuffer stored in DDR;
-- Linux `simple-framebuffer` binding.
+The local LiteX target wrapper keeps VGA opt-in and makes the timing preset
+configurable. This avoids editing the ignored upstream LiteX-Boards checkout and
+works around the upstream Nexys4 DDR target's fixed 40 MHz / `800x600@60Hz`
+video setup.
+
+Build the conservative verified mode with:
+
+```bash
+LITEX_WITH_VIDEO_FRAMEBUFFER=1 \
+LITEX_VIDEO_TIMING='640x480@60Hz' \
+LITEX_SYS_CLK_FREQ=60e6 \
+./scripts/build_litex_nexys4ddr_linux.sh build/litex_nexys4ddr_linux_vga_fb_640x480_60mhz
+```
+
+The hardware-verified build completed with routed timing met:
+
+```text
+bitstream: build/litex_nexys4ddr_linux_vga_fb_640x480_60mhz/gateware/digilent_nexys4ddr.bit
+WNS(ns):   0.002
+VGA clock: 25.087 MHz actual, for LiteX `640x480@60Hz` timing
+```
+
+Generated video metadata for the verified build:
+
+```text
+framebuffer memory: 0x47e00000, size 0x0012c000
+format:             a8b8g8r8
+width/height:       640x480
+stride:             2560
+
+video_framebuffer CSR base:     0xf0007800
+video_framebuffer_vtg CSR base: 0xf0008000
+```
+
+The first hardware-visible smoke test was deliberately done directly from the
+LiteX BIOS, before relying on Linux simple-framebuffer. This proves the physical
+VGA chain and LiteX video core independently of Linux userspace:
+
+```bash
+./scripts/program_litex_nexys4ddr.sh \
+  build/litex_nexys4ddr_linux_vga_fb_640x480_60mhz/gateware/digilent_nexys4ddr.bit
+
+./scripts/vga_bios_test_640x480.py --mode white
+./scripts/vga_bios_test_640x480.py --mode bars
+```
+
+The BIOS helper writes the framebuffer in DDR and programs these 640x480 timing
+CSRs:
+
+```text
+VTG hres=640, hsync_start=656, hsync_end=752, hscan=800
+VTG vres=480, vsync_start=490, vsync_end=492, vscan=525
+DMA base=0x47e00000, length=0x0012c000, loop=1, enable=1
+VTG enable=1
+```
+
+Observed hardware result:
+
+```text
+white screen visible on VGA monitor
+horizontal color bars visible on VGA monitor
+DMA offset CSR changes between reads, confirming the DMA is running
+```
+
+Important bring-up note: the test monitor/USB setup was sensitive to display or
+cable power events. If the Digilent FTDI interface re-enumerates and Vivado
+reports the Artix-7 `DONE status = 0`, the FPGA SRAM configuration was lost;
+reprogram the bitstream before rerunning VGA tests. Turning the monitor on/off
+can therefore look like a VGA failure when it is actually a board/USB/power
+stability issue.
+
+Linux integration status:
+
+- The generated VGA SD-root DTS exposes a `simple-framebuffer` node with the
+  correct 640x480 geometry.
+- Linux `simplefb` can map `/dev/fb0`, but simple-framebuffer by itself does not
+  enable the LiteX video DMA/VTG; userspace or a real driver must program those
+  CSRs.
+- Next display milestone: add an automatic Linux-side enable path, then layer a
+  framebuffer console/login or a minimal GUI on top.
 
 Avoid complex GPU/display acceleration in the first pass.
 

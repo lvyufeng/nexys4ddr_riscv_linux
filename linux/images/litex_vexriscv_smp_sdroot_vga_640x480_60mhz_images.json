@@ -1,0 +1,5 @@
+{
+  "Image": "0x40000000",
+  "rv32_sdroot_vga_640x480_60mhz.dtb": "0x40ef0000",
+  "opensbi.bin": "0x40f00000"
+}
