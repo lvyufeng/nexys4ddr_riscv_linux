@@ -252,6 +252,34 @@ cable disturbance: if the Digilent FTDI interface re-enumerates and Vivado later
 reports `DONE status = 0`, reprogram the bitstream before rerunning the BIOS VGA
 smoke test.
 
+Building on that, Linux now boots with a **login prompt on the VGA monitor**,
+like a normal text-mode Linux server (no GUI). Serial (LiteUART) stays the
+primary control path. The VGA SD-root device tree
+(`linux/dts/litex_nexys4ddr_vexriscv_smp_sdroot_vga_640x480_60mhz.dts`) adds a
+`simple-framebuffer` node so the kernel maps `/dev/fb0` and switches the console
+to an `80x30` framebuffer console; an init script
+(`buildroot/overlay/etc/init.d/S09litex-vga`) then programs the LiteX video
+DMA/VTG CSRs (the same ones the BIOS test verified) to start the scanout, and a
+`tty1` getty offers a local login on the monitor.
+
+```bash
+# Build the VGA SD-root DTB + image map, then boot it.
+./scripts/prepare_litex_sdroot_vga_640x480_images.sh
+./scripts/program_litex_nexys4ddr.sh \
+  build/litex_nexys4ddr_linux_vga_fb_640x480_60mhz/gateware/digilent_nexys4ddr.bit
+IMAGES=linux/images/litex_vexriscv_smp_sdroot_vga_640x480_60mhz_images.json \
+  ./scripts/boot_litex_linux_sdroot_serial.sh /dev/ttyUSB1
+```
+
+The kernel command line keeps `console=tty0` first and `console=liteuart` last so
+printk mirrors to both the monitor and serial, while `/dev/console` and the
+default getty stay on serial as the control path. Hardware verification confirmed
+`/dev/fb0`, the `simplefb registered` / `switching to colour frame buffer device`
+dmesg lines, the `litex-vga: enabling 640x480@60Hz scanout... OK` boot message, an
+advancing DMA offset register, and a `litex-sdroot login:` prompt reachable over
+serial. See [`docs/peripherals.md`](docs/peripherals.md) for the full acceptance
+log. Local keyboard input (USB/PS/2 on pins F4/B2) is the next display milestone.
+
 ## Relationship to `step_into_mips`
 
 The completed `step_into_mips` repository can be used as board bring-up reference for:

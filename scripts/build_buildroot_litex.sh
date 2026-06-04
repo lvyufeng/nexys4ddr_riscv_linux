@@ -9,6 +9,8 @@ BR_EXTERNAL=${BR_EXTERNAL:-../linux-on-litex-vexriscv/buildroot/}
 GLOBAL_PATCH_DIR=${GLOBAL_PATCH_DIR:-$ROOT_DIR/local_patches}
 LINUX_CONFIG=${LINUX_CONFIG:-$ROOT_DIR/linux/configs/litex_nexys4ddr_linux.config}
 POST_IMAGE_SCRIPT=${POST_IMAGE_SCRIPT:-$ROOT_DIR/buildroot/post-image-nexys4ddr.sh}
+POST_BUILD_SCRIPT=${POST_BUILD_SCRIPT:-$ROOT_DIR/buildroot/post-build-nexys4ddr.sh}
+ROOTFS_OVERLAY=${ROOTFS_OVERLAY:-$ROOT_DIR/buildroot/overlay}
 
 if [ ! -d "$BR_DIR" ]; then
   echo "Missing $BR_DIR. Run scripts/bootstrap_linux_on_litex.sh first." >&2
@@ -34,6 +36,16 @@ fi
   fi
   if [ -f "$POST_IMAGE_SCRIPT" ]; then
     ./utils/config --file .config --set-str BR2_ROOTFS_POST_IMAGE_SCRIPT "$POST_IMAGE_SCRIPT"
+  fi
+  # Rootfs overlay + post-build hook for the VGA framebuffer console: the overlay
+  # ships /etc/init.d/S09litex-vga (enables the LiteX video DMA/VTG so fbcon is
+  # visible), and the post-build script adds a tty1 getty for on-screen login.
+  # Both are no-ops on non-VGA bitstreams (S09litex-vga keys off /dev/fb0).
+  if [ -d "$ROOTFS_OVERLAY" ]; then
+    ./utils/config --file .config --set-str BR2_ROOTFS_OVERLAY "$ROOTFS_OVERLAY"
+  fi
+  if [ -f "$POST_BUILD_SCRIPT" ]; then
+    ./utils/config --file .config --set-str BR2_ROOTFS_POST_BUILD_SCRIPT "$POST_BUILD_SCRIPT"
   fi
   # Enable SSH access for the Ethernet milestone. Dropbear rejects empty-password
   # root logins by default, so give the lab image a simple configurable password.

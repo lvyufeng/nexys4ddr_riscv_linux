@@ -309,15 +309,85 @@ reprogram the bitstream before rerunning VGA tests. Turning the monitor on/off
 can therefore look like a VGA failure when it is actually a board/USB/power
 stability issue.
 
-Linux integration status:
+### Linux VGA console login status (verified)
 
-- The generated VGA SD-root DTS exposes a `simple-framebuffer` node with the
-  correct 640x480 geometry.
-- Linux `simplefb` can map `/dev/fb0`, but simple-framebuffer by itself does not
-  enable the LiteX video DMA/VTG; userspace or a real driver must program those
-  CSRs.
-- Next display milestone: add an automatic Linux-side enable path, then layer a
-  framebuffer console/login or a minimal GUI on top.
+The 640x480@60Hz VGA build now boots Linux with console text on the VGA monitor,
+ending at a login prompt. Serial (LiteUART) remains the primary control path and
+the existing serial getty still works.
+
+**Verified flow:**
+
+1. **Device tree**: `linux/dts/litex_nexys4ddr_vexriscv_smp_sdroot_vga_640x480_60mhz.dts`
+   derives from the checked-in baseline SD-root DTS (preserving the six GPIO
+   peripherals) and adds the framebuffer deltas:
+   - reserved-memory child `framebuffer@47e00000` (0x12c000 bytes);
+   - `soc` child `simple-framebuffer` node (640x480, stride 2560, `a8b8g8r8`);
+   - bootargs `console=tty0 console=liteuart earlycon=liteuart,0xf0001000 ...`
+     (tty0 first, liteuart last).
+
+   The console ordering is critical: placing `console=tty0` first ensures printk
+   mirrors to both fbcon and serial while the final console device (liteuart)
+   becomes `/dev/console`, keeping Buildroot's default `console::getty` on the
+   serial control path. If `console=tty0` were last, `/dev/console` would resolve
+   to tty0 and the default serial getty would disappear.
+
+2. **Rootfs getty and enable script**: `buildroot/post-build-nexys4ddr.sh`
+   idempotently appends two getty lines to `/etc/inittab`:
+   ```text
+   tty1::respawn:/sbin/getty -L tty1 0 linux
+   ttyLXU0::respawn:/sbin/getty -L ttyLXU0 0 vt100
+   ```
+   The tty1 entry spawns a getty on the VGA framebuffer console. The ttyLXU0 entry
+   is belt-and-suspenders for future full Buildroot rebuilds; the current SD card
+   relies on the console-ordering contract for serial login.
+
+   `buildroot/overlay/etc/init.d/S09litex-vga` is a POSIX shell script that
+   programs the LiteX VideoTimingGenerator and DMA CSRs (using BusyBox `devmem`)
+   to enable the 640x480@60Hz scanout. It is a strict no-op when `/dev/fb0` is
+   absent, so the overlay is safe for non-VGA bitstreams. The enable script uses
+   the same register addresses and values hardware-verified by
+   `scripts/vga_bios_test_640x480.py` (BIOS white screen + color bars).
+
+3. **Build + image preparation**: `scripts/prepare_litex_sdroot_vga_640x480_images.sh`
+   builds `linux/images/rv32_sdroot_vga_640x480_60mhz.dtb` from the VGA DTS via
+   `scripts/build_litex_dtb.sh` (with `INITRD_IMAGE=none`), then writes the image
+   map `linux/images/litex_vexriscv_smp_sdroot_vga_640x480_60mhz_images.json`.
+
+4. **Hardware acceptance**: boot with the VGA bitstream and the VGA SD-root DTB,
+   then confirm via `/tmp/claude_verify_vga_login.py` (serial login + batched CSR
+   readback):
+   ```text
+   /dev/fb0: crw------- 29,0
+   fbset: 640x480, 32bpp
+   dmesg: simple-framebuffer ... fb0: simplefb registered!
+          Console: switching to colour frame buffer device 80x30
+   /proc/cmdline: console=tty0 console=liteuart earlycon=...
+   /etc/init.d/S09litex-vga: 2170 bytes, 0755
+   boot log: litex-vga: enabling 640x480@60Hz scanout... OK
+   gettys: console::... (serial) + tty1::... (VGA)
+   DMA base=0x47E00000, length=0x0012C000, enable=0x1, loop=0x1
+   VTG enable=0x1, hres=0x280 (640), vres=0x1E0 (480)
+   DMA offset advancing: off1=0x00010EC2 -> off2=0x00016002
+   ```
+
+   The advancing DMA offset register confirms the scanout is running. Serial login
+   reaches `litex-sdroot login:` and accepts `root`/`root`. The software evidence
+   (fbcon switch, S09litex-vga OK, DMA offset) proves the framebuffer console is
+   rendering to `0x47e00000` and the scanout is active, using the same hardware
+   path verified by the BIOS color-bars test.
+
+**Why not add a GUI yet?**
+
+The current build is text-only (no X11/Wayland/SDL/Qt). This milestone realizes
+"能够跟普通的linux server一样，直接屏幕显示login" without the complexity or rootfs
+size penalty of a full GUI stack. The framebuffer console (`fbcon`) drives the VGA
+monitor directly. A minimal GUI can be layered on later if needed.
+
+**Next display milestone:**
+
+Add USB (PS/2) keyboard input so the user can log in locally at the VGA prompt.
+On Nexys4 DDR the USB-HID host port is bridged on-board to PS/2 on FPGA pins
+F4(clk)/B2(dat); kernel 6.9 ships `drivers/input/serio/ps2-gpio.c`.
 
 Avoid complex GPU/display acceleration in the first pass.
 

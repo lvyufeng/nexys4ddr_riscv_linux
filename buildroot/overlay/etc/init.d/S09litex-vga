@@ -1,0 +1,90 @@
+#!/bin/sh
+#
+# Enable the LiteX 640x480@60Hz VGA scanout so the Linux framebuffer console
+# (fbcon on /dev/fb0) becomes visible on the monitor.
+#
+# simple-framebuffer maps /dev/fb0 but does NOT start the LiteX video DMA or the
+# VideoTimingGenerator (VTG); those CSRs must be programmed from software. These
+# are the same registers and values hardware-verified by
+# scripts/vga_bios_test_640x480.py (white screen + color bars from the BIOS).
+#
+# This rootfs is shared with the non-VGA SD-root bitstreams, where 0xf0007800/
+# 0xf0008000 are not the video core. The script is therefore a strict no-op
+# unless the kernel created /dev/fb0, which only happens when the booted DTB
+# declares the simple-framebuffer node (i.e. the VGA build).
+
+# LiteX VideoFrameBuffer DMA CSRs.
+DMA_BASE=0xf0007800
+DMA_LENGTH=0xf0007804
+DMA_ENABLE=0xf0007808
+DMA_LOOP=0xf0007810
+
+# LiteX VideoTimingGenerator CSRs.
+VTG_ENABLE=0xf0008000
+VTG_HRES=0xf0008004
+VTG_HSYNC_START=0xf0008008
+VTG_HSYNC_END=0xf000800c
+VTG_HSCAN=0xf0008010
+VTG_VRES=0xf0008014
+VTG_VSYNC_START=0xf0008018
+VTG_VSYNC_END=0xf000801c
+VTG_VSCAN=0xf0008020
+
+# Reserved framebuffer in DDR (matches the DTS framebuffer@47e00000 node:
+# 640x480, a8b8g8r8, stride 2560 -> 0x12c000 bytes).
+FB_ADDR=0x47e00000
+FB_LEN=0x12c000
+
+w() {
+	devmem "$1" 32 "$2"
+}
+
+start() {
+	if [ ! -e /dev/fb0 ]; then
+		echo "litex-vga: no /dev/fb0 (non-VGA bitstream), skipping"
+		return 0
+	fi
+	printf 'litex-vga: enabling 640x480@60Hz scanout... '
+	# Quiesce DMA/VTG before reprogramming.
+	w "$VTG_ENABLE" 0
+	w "$DMA_ENABLE" 0
+	# 640x480@60Hz LiteX timing preset.
+	w "$VTG_HRES" 640
+	w "$VTG_HSYNC_START" 656
+	w "$VTG_HSYNC_END" 752
+	w "$VTG_HSCAN" 800
+	w "$VTG_VRES" 480
+	w "$VTG_VSYNC_START" 490
+	w "$VTG_VSYNC_END" 492
+	w "$VTG_VSCAN" 525
+	# Scan out the reserved framebuffer, looping forever.
+	w "$DMA_BASE" "$FB_ADDR"
+	w "$DMA_LENGTH" "$FB_LEN"
+	w "$DMA_LOOP" 1
+	w "$DMA_ENABLE" 1
+	w "$VTG_ENABLE" 1
+	echo "OK"
+}
+
+stop() {
+	[ -e /dev/fb0 ] || return 0
+	w "$VTG_ENABLE" 0
+	w "$DMA_ENABLE" 0
+}
+
+case "$1" in
+	start)
+		start
+		;;
+	stop)
+		stop
+		;;
+	restart | reload)
+		stop
+		start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
