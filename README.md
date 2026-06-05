@@ -291,3 +291,7 @@ The completed `step_into_mips` repository can be used as board bring-up referenc
 - serial/JTAG verification workflow.
 
 It should not be used as the code base for Linux directly because Linux-capable RISC-V requires a different CPU architecture, privileged spec, MMU, interrupt topology, firmware, and device tree flow.
+
+## Friend Link
+
+- linuxdo: [linuxdo](https://linux.do)
