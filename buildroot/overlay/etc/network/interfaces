@@ -1,0 +1,11 @@
+auto lo
+iface lo inet loopback
+
+# Static lab IP for LiteX Ethernet/Dropbear access. The kernel in this
+# Buildroot flow does not consume the LiteX-generated ip= bootarg, so configure
+# eth0 in userspace as well.
+auto eth0
+iface eth0 inet static
+	address 192.168.1.50
+	netmask 255.255.255.0
+	gateway 192.168.1.100

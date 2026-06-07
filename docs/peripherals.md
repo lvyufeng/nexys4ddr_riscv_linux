@@ -175,6 +175,45 @@ GPIO_OUTPUT_SET path=/dev/gpiochip5 lines=8 mask=0xff hold_ms=500
 GPIO_OUTPUT_SET_OK
 ```
 
+### Seven-segment temperature display status (verified)
+
+For the temperature-display milestone, the seven-segment pins are driven by a
+LiteX hardware scanner at the existing `seven_seg` CSR slot (`0xf0006800`) rather
+than by Linux userspace GPIO multiplexing. Linux writes eight segment bytes at a
+low update rate while the FPGA scans the active-low digit enables at a stable
+rate, avoiding visible flicker from scheduler or I2C latency.
+
+Build the gateware with:
+
+```bash
+LITEX_WITH_XADC=1 \
+LITEX_WITH_TEMP_I2C=1 \
+./scripts/build_litex_nexys4ddr_linux.sh build/litex_nexys4ddr_linux_temp_display
+```
+
+The display helper is installed into the Buildroot image as
+`/usr/bin/sevenseg_temp_display`. It shows two 4-digit temperature groups:
+
+```text
+[ FPGA die temperature ][ board/ambient temperature ]
+        53.3                    36.3
+```
+
+Sensor sources are tried in Linux-friendly order: XADC hwmon and `/dev/i2c-*`
+first, then raw CSR fallbacks (`xadc@0xf0009800`, `temp_i2c@0xf000a000`) so the
+demo still works when a running SD-root DTB does not expose the new nodes yet.
+Hardware verification decoded the live scanner CSRs as approximately
+`53.3  36.3` with raw fallback enabled; disabling raw fallback produced dashes
+when the kernel nodes were absent, as expected.
+
+Useful commands:
+
+```bash
+sevenseg_temp_display --fake 42.3,25.6
+sevenseg_temp_display --update-ms 500 --scan-hz 1000
+sevenseg_temp_display --no-raw-fallback   # require hwmon + /dev/i2c-* nodes
+```
+
 ## Storage / SPI-class peripherals
 
 Candidate devices:

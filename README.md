@@ -220,6 +220,11 @@ seven-segment display are also enabled as simple GPIO output controllers:
 /dev/gpiochip5  seven_seg_ctrl  8 output lines, active-low digit enables
 ```
 
+A later temperature-display build replaces the seven-segment GPIO banks with a
+hardware scanner CSR at `0xf0006800`, adds FPGA XADC and board temperature-sensor
+I2C CSRs, and installs `/usr/bin/sevenseg_temp_display` to show the FPGA die and
+ambient temperatures as two 4-digit groups.
+
 The RGB LED channels and seven-segment digit scan were verified over SSH with a
 GPIO character-UAPI helper. See [`docs/peripherals.md`](docs/peripherals.md).
 

@@ -5,10 +5,14 @@ ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT_DIR"
 
 SRC=${SRC:-third_party/linux-on-litex-vexriscv/buildroot/patches}
+PROJECT_SRC=${PROJECT_SRC:-project_patches/buildroot}
 DST=${DST:-local_patches}
 rm -rf "$DST"
 mkdir -p "$DST"
 cp -a "$SRC"/. "$DST"/
+if [ -d "$PROJECT_SRC" ]; then
+  cp -a "$PROJECT_SRC"/. "$DST"/
+fi
 
 # The reference tree's 0021 LiteUART RX IRQ backport can fail to apply against
 # the currently downloaded Linux 6.9 tarball. UART polling still works for

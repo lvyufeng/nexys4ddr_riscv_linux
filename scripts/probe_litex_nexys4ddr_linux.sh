@@ -55,6 +55,15 @@ if [ "${LITEX_WITH_SEVEN_SEG:-1}" = "1" ]; then
   EXTRA_LITEX_ARGS+=(--with-seven-seg)
 fi
 
+# Temperature display sources: FPGA die temperature via XADC/SysMon and the
+# Nexys4 DDR board temperature sensor pins via a LiteX bit-banged I2C master.
+if [ "${LITEX_WITH_XADC:-0}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-xadc)
+fi
+if [ "${LITEX_WITH_TEMP_I2C:-0}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-temp-i2c)
+fi
+
 # VGA is resource/timing heavier than simple GPIO, so keep it opt-in per build.
 # LiteX exposes terminal and framebuffer modes as mutually exclusive target args.
 if [ "${LITEX_WITH_VIDEO_TERMINAL:-0}" = "1" ] && [ "${LITEX_WITH_VIDEO_FRAMEBUFFER:-0}" = "1" ]; then
@@ -103,18 +112,19 @@ PATCH_ARGS=(
   --switches-ngpio "${LITEX_SWITCHES_NGPIO:-16}"
   --buttons-ngpio "${LITEX_BUTTONS_NGPIO:-5}"
   --rgb-leds-ngpio "${LITEX_RGB_LEDS_NGPIO:-6}"
-  --seven-seg-ngpio "${LITEX_SEVEN_SEG_NGPIO:-8}"
-  --seven-seg-ctrl-ngpio "${LITEX_SEVEN_SEG_CTRL_NGPIO:-8}"
 )
 GPIO_META=$(python3 - "$OUT_DIR/csr.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
 bases = d.get("csr_bases", {})
 constants = d.get("constants", {})
-for name in ["buttons", "rgb_leds", "seven_seg", "seven_seg_ctrl"]:
+for name in ["buttons", "rgb_leds", "seven_seg", "seven_seg_ctrl", "xadc", "temp_i2c"]:
     base = bases.get(name)
     print(f"{name}_base=0x{base:x}" if base is not None else f"{name}_base=")
 print(f"buttons_interrupt={constants.get('buttons_interrupt', '')}")
+print(f"seven_seg_ngpio={constants.get('seven_seg_ngpio', '')}")
+print(f"seven_seg_ctrl_ngpio={constants.get('seven_seg_ctrl_ngpio', '')}")
+print(f"seven_seg_hardware_scanner={constants.get('seven_seg_hardware_scanner', '')}")
 PY
 )
 eval "$GPIO_META"
@@ -127,11 +137,27 @@ fi
 if [ -n "$rgb_leds_base" ]; then
   PATCH_ARGS+=(--rgb-leds-base "$rgb_leds_base")
 fi
+if [ -n "${seven_seg_ngpio:-}" ]; then
+  PATCH_ARGS+=(--seven-seg-ngpio "$seven_seg_ngpio")
+else
+  PATCH_ARGS+=(--seven-seg-ngpio "${LITEX_SEVEN_SEG_NGPIO:-8}")
+fi
+if [ -n "${seven_seg_ctrl_ngpio:-}" ]; then
+  PATCH_ARGS+=(--seven-seg-ctrl-ngpio "$seven_seg_ctrl_ngpio")
+else
+  PATCH_ARGS+=(--seven-seg-ctrl-ngpio "${LITEX_SEVEN_SEG_CTRL_NGPIO:-8}")
+fi
 if [ -n "$seven_seg_base" ]; then
   PATCH_ARGS+=(--seven-seg-base "$seven_seg_base")
 fi
 if [ -n "$seven_seg_ctrl_base" ]; then
   PATCH_ARGS+=(--seven-seg-ctrl-base "$seven_seg_ctrl_base")
+fi
+if [ -n "$xadc_base" ]; then
+  PATCH_ARGS+=(--xadc-base "$xadc_base")
+fi
+if [ -n "$temp_i2c_base" ]; then
+  PATCH_ARGS+=(--temp-i2c-base "$temp_i2c_base")
 fi
 python3 tools/patch_litex_nexys4ddr_dts.py "$OUT_DIR/digilent_nexys4ddr_linux.dts" "${PATCH_ARGS[@]}"
 

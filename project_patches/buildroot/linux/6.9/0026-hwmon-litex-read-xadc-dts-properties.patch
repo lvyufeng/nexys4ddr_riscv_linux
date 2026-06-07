@@ -1,0 +1,147 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: Claude <noreply@anthropic.com>
+Date: Sat, 6 Jun 2026 22:45:00 +0000
+Subject: [PATCH] hwmon: litex: read XADC offsets/scales from devicetree
+
+Modern LiteX-generated XADC devicetree nodes provide explicit CSR offsets
+and conversion constants. Use those properties when present so the driver
+matches the generated CSR layout instead of relying on historical fixed
+spacing. Use div_u64() for the runtime conversion constants so 32-bit
+RISC-V kernels do not emit libgcc division helpers.
+---
+ drivers/hwmon/litex-hwmon.c | 59 +++++++++++++++++++++++++++++++++-----
+ 1 file changed, 52 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/hwmon/litex-hwmon.c b/drivers/hwmon/litex-hwmon.c
+index e721fe9537ff..9b5d84a90c18 100644
+--- a/drivers/hwmon/litex-hwmon.c
++++ b/drivers/hwmon/litex-hwmon.c
+@@ -20,6 +20,8 @@
+ #include <linux/platform_device.h>
+ #include <linux/of.h>
+ #include <linux/hwmon.h>
++#include <linux/math64.h>
++#include <linux/property.h>
+ #include <linux/litex.h>
+ 
+ #define TEMP_REG_OFFSET               0x0
+@@ -39,20 +41,29 @@
+ struct litex_hwmon {
+ 	void __iomem     *membase;
+ 	struct device    *hdev;
++	u32              temp_reg_offset;
++	u32              vccint_reg_offset;
++	u32              vccaux_reg_offset;
++	u32              vccbram_reg_offset;
++	u32              temp_mul;
++	u32              temp_div;
++	u32              temp_offset;
++	u32              voltage_mul;
++	u32              voltage_div;
+ };
+ 
+ /* Transfer functions taken from XILINX UG480 (v1.10.1)
+  * www.xilinx.com/support/documentation/user_guides/ug480_7Series_XADC.pdf
+  */
+ 
+-static inline long litex_temp_transfer_fun(long val)
++static inline long litex_temp_transfer_fun(long val, u32 mul, u32 div, u32 offset)
+ {
+-	return ((val * 503975ULL) / 4096ULL) - 273150ULL;
++	return div_u64(val * (u64)mul, div) - offset;
+ }
+ 
+-static inline long litex_supp_transfer_fun(long val)
++static inline long litex_supp_transfer_fun(long val, u32 mul, u32 div)
+ {
+-	return ((val * 3000) / 4096);
++	return div_u64(val * (u64)mul, div);
+ }
+ 
+ static inline int litex_read_temp(struct litex_hwmon *hwmon_s, u32 attr,
+@@ -66,8 +77,9 @@
+ 	if (channel != CHANNEL_TEMP)
+ 		return -EINVAL;
+ 
+-	raw_data = litex_read16(hwmon_s->membase + TEMP_REG_OFFSET);
+-	*val = litex_temp_transfer_fun(raw_data);
++	raw_data = litex_read16(hwmon_s->membase + hwmon_s->temp_reg_offset);
++	*val = litex_temp_transfer_fun(raw_data, hwmon_s->temp_mul,
++					      hwmon_s->temp_div, hwmon_s->temp_offset);
+ 	return 0;
+ }
+ 
+@@ -82,20 +94,21 @@
+ 
+ 	switch (channel) {
+ 	case CHANNEL_VCCINT:
+-		offset = VCCINT_REG_OFFSET;
++		offset = hwmon_s->vccint_reg_offset;
+ 		break;
+ 	case CHANNEL_VCCAUX:
+-		offset = VCCAUX_REG_OFFSET;
++		offset = hwmon_s->vccaux_reg_offset;
+ 		break;
+ 	case CHANNEL_VCCBRAM:
+-		offset = VCCBRAM_REG_OFFSET;
++		offset = hwmon_s->vccbram_reg_offset;
+ 		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+ 
+ 	raw_data = litex_read16(hwmon_s->membase + offset);
+-	*val = litex_supp_transfer_fun(raw_data);
++	*val = litex_supp_transfer_fun(raw_data, hwmon_s->voltage_mul,
++					      hwmon_s->voltage_div);
+ 	return 0;
+ }
+ 
+@@ -165,6 +178,38 @@
+ 	.info = litex_hwmon_channel_info
+ };
+ 
++static void litex_hwmon_read_dt_props(struct device *dev, struct litex_hwmon *hwmon_s)
++{
++	hwmon_s->temp_reg_offset = TEMP_REG_OFFSET;
++	hwmon_s->vccint_reg_offset = VCCINT_REG_OFFSET;
++	hwmon_s->vccaux_reg_offset = VCCAUX_REG_OFFSET;
++	hwmon_s->vccbram_reg_offset = VCCBRAM_REG_OFFSET;
++	hwmon_s->temp_mul = 503975;
++	hwmon_s->temp_div = 4096;
++	hwmon_s->temp_offset = 273150;
++	hwmon_s->voltage_mul = 3000;
++	hwmon_s->voltage_div = 4096;
++
++	device_property_read_u32(dev, "litex,temperature-csr-offset",
++				 &hwmon_s->temp_reg_offset);
++	device_property_read_u32(dev, "litex,vccint-csr-offset",
++				 &hwmon_s->vccint_reg_offset);
++	device_property_read_u32(dev, "litex,vccaux-csr-offset",
++				 &hwmon_s->vccaux_reg_offset);
++	device_property_read_u32(dev, "litex,vccbram-csr-offset",
++				 &hwmon_s->vccbram_reg_offset);
++	device_property_read_u32(dev, "litex,temperature-mul",
++				 &hwmon_s->temp_mul);
++	device_property_read_u32(dev, "litex,temperature-div",
++				 &hwmon_s->temp_div);
++	device_property_read_u32(dev, "litex,temperature-offset",
++				 &hwmon_s->temp_offset);
++	device_property_read_u32(dev, "litex,voltage-mul",
++				 &hwmon_s->voltage_mul);
++	device_property_read_u32(dev, "litex,voltage-div",
++				 &hwmon_s->voltage_div);
++}
++
+ /* Driver functions */
+ 
+ static int litex_hwmon_probe(struct platform_device *pdev)
+@@ -180,6 +225,8 @@
+ 	if (!hwmon_s)
+ 		return -ENOMEM;
+ 
++	litex_hwmon_read_dt_props(&pdev->dev, hwmon_s);
++
+ 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+ 	if (!res)
+ 		return -EBUSY;

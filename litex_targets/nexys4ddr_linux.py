@@ -6,14 +6,17 @@ peripherals that are not instantiated by the upstream target yet. Keeping this i
 repo avoids editing the ignored third_party/litex-boards checkout.
 """
 
-from migen import Cat, ClockDomain, Signal
+from migen import Array, Cat, ClockDomain, Constant, If, Mux, Signal
 
 from litex.gen import LiteXModule
 from litex_boards.targets import digilent_nexys4ddr
+from litex.soc.cores.bitbang import I2CMaster
 from litex.soc.cores.clock import S7IDELAYCTRL, S7MMCM
 from litex.soc.cores.gpio import GPIOIn, GPIOOut
 from litex.soc.cores.video import VideoVGAPHY, video_timings
+from litex.soc.cores.xadc import XADC
 from litex.soc.integration.builder import Builder
+from litex.soc.interconnect.csr import CSRStatus, CSRStorage
 
 
 def video_pix_clk(timing):
@@ -47,6 +50,86 @@ class LocalCRG(LiteXModule):
         self.idelayctrl = S7IDELAYCTRL(self.cd_idelay)
 
 
+class SevenSegScanner(LiteXModule):
+    """Hardware multiplexing controller for the Nexys4 DDR 8-digit display.
+
+    Linux writes eight segment bytes at low rate; fabric scans the active-low
+    digit enables at a stable rate so display refresh is not affected by Linux
+    scheduling or I2C/hwmon reads.
+    """
+
+    def __init__(self, segments, digit_en_n, sys_clk_freq, scan_hz=1000):
+        default_divider = max(1, int(sys_clk_freq // (scan_hz * 8)))
+        self.control = CSRStorage(
+            32,
+            reset=(default_divider << 8) | (1 << 2) | (1 << 1) | 1,
+            description="Bit 0 enable, bit 1 segment active-low, bit 2 reverse digit order, bits 8..31 scan divider.",
+        )
+        self.digit0 = CSRStorage(8, reset=0x00, description="Leftmost display cell segment mask before polarity inversion.")
+        self.digit1 = CSRStorage(8, reset=0x00)
+        self.digit2 = CSRStorage(8, reset=0x00)
+        self.digit3 = CSRStorage(8, reset=0x00)
+        self.digit4 = CSRStorage(8, reset=0x00)
+        self.digit5 = CSRStorage(8, reset=0x00)
+        self.digit6 = CSRStorage(8, reset=0x00)
+        self.digit7 = CSRStorage(8, reset=0x00)
+        self.status = CSRStatus(16, description="Bits 0..2 current scan index, bits 8..15 current physical digit line.")
+
+        cells = Array([
+            self.digit0.storage,
+            self.digit1.storage,
+            self.digit2.storage,
+            self.digit3.storage,
+            self.digit4.storage,
+            self.digit5.storage,
+            self.digit6.storage,
+            self.digit7.storage,
+        ])
+        idx = Signal(3)
+        timer = Signal(24)
+        divider = Signal(24)
+        physical = Signal(3)
+        seg_raw = Signal(8)
+        seg_out = Signal(8)
+        digit_mask = Signal(8)
+        enabled = Signal()
+        active_low = Signal()
+        reverse = Signal()
+
+        digit_masks = Array([Constant(0xff & ~(1 << i), 8) for i in range(8)])
+
+        self.comb += [
+            enabled.eq(self.control.storage[0]),
+            active_low.eq(self.control.storage[1]),
+            reverse.eq(self.control.storage[2]),
+            divider.eq(self.control.storage[8:32]),
+            physical.eq(Mux(reverse, 7 - idx, idx)),
+            seg_raw.eq(cells[idx]),
+            seg_out.eq(Mux(active_low, ~seg_raw, seg_raw)),
+            digit_mask.eq(digit_masks[physical]),
+            self.status.status.eq(Cat(idx, Constant(0, 5), digit_mask)),
+        ]
+
+        self.comb += [
+            segments.eq(Mux(enabled, seg_out, Mux(active_low, 0xff, 0x00))),
+            digit_en_n.eq(Mux(enabled, digit_mask, 0xff)),
+        ]
+
+        self.sync += [
+            If(~enabled,
+                timer.eq(0),
+                idx.eq(0),
+            ).Else(
+                If(timer >= divider,
+                    timer.eq(0),
+                    idx.eq(idx + 1),
+                ).Else(
+                    timer.eq(timer + 1),
+                )
+            )
+        ]
+
+
 class LocalSoC(digilent_nexys4ddr.BaseSoC):
     def __init__(
         self,
@@ -55,6 +138,8 @@ class LocalSoC(digilent_nexys4ddr.BaseSoC):
         with_buttons=False,
         with_rgb_leds=False,
         with_seven_seg=False,
+        with_xadc=False,
+        with_temp_i2c=False,
         with_video_terminal=False,
         with_video_framebuffer=False,
         video_timing="800x600@60Hz",
@@ -109,15 +194,27 @@ class LocalSoC(digilent_nexys4ddr.BaseSoC):
             self.add_constant("rgb_leds_ngpio", 6)
 
         if with_seven_seg:
-            self.seven_seg = GPIOOut(self.platform.request("seven_seg"), reset=0x00)
+            # Stable hardware-scanned seven-segment display controller. Linux only
+            # writes the eight segment bytes at low rate; fabric performs the
+            # active-low digit multiplexing at a fixed scan rate to avoid visible
+            # flicker from userspace scheduling/GPIO ioctl jitter.
+            self.seven_seg = SevenSegScanner(
+                self.platform.request("seven_seg"),
+                self.platform.request("seven_seg_ctrl_n"),
+                sys_clk_freq=sys_clk_freq,
+            )
             self.csr.add("seven_seg", n=13, use_loc_if_exists=True)
-            self.add_constant("seven_seg_ngpio", 8)
+            self.add_constant("seven_seg_hardware_scanner", 1)
+            self.add_constant("seven_seg_ngpio", 0)
+            self.add_constant("seven_seg_ctrl_ngpio", 0)
 
-            # Nexys4 DDR digit enables are active-low. Reset all high so no digit
-            # is selected until Linux explicitly drives the controller.
-            self.seven_seg_ctrl = GPIOOut(self.platform.request("seven_seg_ctrl_n"), reset=0xff)
-            self.csr.add("seven_seg_ctrl", n=14, use_loc_if_exists=True)
-            self.add_constant("seven_seg_ctrl_ngpio", 8)
+        if with_xadc:
+            self.xadc = XADC()
+            self.csr.add("xadc", n=19, use_loc_if_exists=True)
+
+        if with_temp_i2c:
+            self.temp_i2c = I2CMaster(self.platform.request("temp_sensor", 0))
+            self.csr.add("temp_i2c", n=20, use_loc_if_exists=True)
 
 
 def main():
@@ -144,7 +241,9 @@ def main():
     parser.add_target_argument("--with-switches", action="store_true", help="Expose 16 board switches as LiteX GPIO inputs.")
     parser.add_target_argument("--with-buttons", action="store_true", help="Expose 5 board buttons as LiteX GPIO inputs.")
     parser.add_target_argument("--with-rgb-leds", action="store_true", help="Expose the two RGB LEDs as 6 LiteX GPIO outputs.")
-    parser.add_target_argument("--with-seven-seg", action="store_true", help="Expose seven-segment segments and digit controls as LiteX GPIO outputs.")
+    parser.add_target_argument("--with-seven-seg", action="store_true", help="Expose seven-segment display through a hardware scanner CSR.")
+    parser.add_target_argument("--with-xadc", action="store_true", help="Expose the FPGA XADC/SysMon block for temperature display.")
+    parser.add_target_argument("--with-temp-i2c", action="store_true", help="Expose the Nexys4 DDR board temperature sensor pins as a LiteX I2C master.")
     args = parser.parse_args()
 
     soc = LocalSoC(
@@ -161,6 +260,8 @@ def main():
         with_buttons=args.with_buttons,
         with_rgb_leds=args.with_rgb_leds,
         with_seven_seg=args.with_seven_seg,
+        with_xadc=args.with_xadc,
+        with_temp_i2c=args.with_temp_i2c,
         **parser.soc_argdict,
     )
     if args.with_spi_sdcard:

@@ -43,3 +43,27 @@ else
   printf '%s # LiteUART serial console login\n' "$SERIAL_LINE" >> "$INITTAB"
   echo "post-build-nexys4ddr: added ttyLXU0 getty for serial control"
 fi
+
+
+ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
+HOST_DIR=${HOST_DIR:-}
+CC=${CC:-}
+if [ -z "$CC" ] && [ -n "$HOST_DIR" ]; then
+  # Prefer Buildroot's compiler wrapper over *.br_real so the target sysroot
+  # and wrapper-added flags are applied automatically.
+  for candidate in "$HOST_DIR"/bin/*-gcc "$HOST_DIR"/bin/*-gcc.br_real; do
+    if [ -x "$candidate" ]; then
+      CC=$candidate
+      break
+    fi
+  done
+fi
+
+if [ -n "$CC" ] && [ -x "$CC" ]; then
+  install -d "$TARGET_DIR/usr/bin"
+  "$CC" -O2 -Wall -Wextra -o "$TARGET_DIR/usr/bin/sevenseg_temp_display" \
+    "$ROOT_DIR/tools/sevenseg_temp_display.c"
+  echo "post-build-nexys4ddr: installed /usr/bin/sevenseg_temp_display"
+else
+  echo "post-build-nexys4ddr: cross compiler not found; skipping sevenseg_temp_display" >&2
+fi

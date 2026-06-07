@@ -58,6 +58,10 @@ fi
   ./utils/config --file .config --enable BR2_PACKAGE_LIBGPIOD
   ./utils/config --file .config --enable BR2_PACKAGE_LIBGPIOD_TOOLS
 
+  # Install I2C discovery tools for board temperature-sensor bring-up.
+  ./utils/config --file .config --enable BR2_PACKAGE_BUSYBOX_SHOW_OTHERS
+  ./utils/config --file .config --enable BR2_PACKAGE_I2C_TOOLS
+
   # Keep the serial-loaded initramfs compact. At 115200 baud, the raw CPIO
   # rootfs dominates upload time; gzip typically cuts it by several MiB and is
   # supported by the kernel config via CONFIG_RD_GZIP=y.
