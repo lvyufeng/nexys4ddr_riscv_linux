@@ -100,7 +100,8 @@ def printable(data: bytes) -> str:
 class SerialBooter:
     def __init__(self, port: str, speed: int, log_path: str | None = None,
                  magic_ack_delay: float = 0.002, command_delay: float = 0.006,
-                 post_magic_delay: float = 0.05):
+                 post_magic_delay: float = 0.05, frame_write_chunk: int = 64,
+                 frame_write_delay: float = 0.0):
         self.ser = serial.Serial(port, speed, timeout=0.05, write_timeout=2.0)
         self.log = open(log_path, "ab", buffering=0) if log_path else None
         self.recent = bytearray()
@@ -108,6 +109,8 @@ class SerialBooter:
         self.magic_ack_delay = magic_ack_delay
         self.command_delay = command_delay
         self.post_magic_delay = post_magic_delay
+        self.frame_write_chunk = frame_write_chunk
+        self.frame_write_delay = frame_write_delay
 
     def close(self) -> None:
         if self.log:
@@ -120,6 +123,19 @@ class SerialBooter:
             self.ser.flush()
             if delay > 0:
                 time.sleep(delay)
+
+    def write_frame(self, frame: bytes) -> None:
+        """Write an SFL frame in bounded chunks to avoid LiteUART RX overflow."""
+        chunk = self.frame_write_chunk
+        if chunk <= 0 or chunk >= len(frame):
+            self.ser.write(frame)
+            self.ser.flush()
+            return
+        for start in range(0, len(frame), chunk):
+            self.ser.write(frame[start:start + chunk])
+            self.ser.flush()
+            if self.frame_write_delay > 0:
+                time.sleep(self.frame_write_delay)
 
     def _record(self, data: bytes, echo: bool = True) -> None:
         if not data:
@@ -233,7 +249,8 @@ class SerialBooter:
     def send_frame(self, cmd: bytes, payload: bytes, retries: int = 16) -> None:
         self.send_encoded_frames([encode_frame(cmd, payload)], retries=retries)
 
-    def send_encoded_frames(self, frames: list[bytes], retries: int = 16, frame_delay: float = 0.0) -> None:
+    def send_encoded_frames(self, frames: list[bytes], retries: int = 16, frame_delay: float = 0.0,
+                            flush_every: int = 1) -> None:
         """Send one or more SFL frames and collect their ACKs.
 
         LiteX SFL acknowledges every frame. Waiting for each ACK before sending
@@ -248,10 +265,47 @@ class SerialBooter:
         pending = list(enumerate(frames))
         last_replies: list[bytes] = []
         for attempt in range(retries):
-            for _, frame in pending:
-                self.ser.write(frame)
-                if frame_delay > 0:
+            flush_every = max(1, flush_every)
+
+            # On retries, prioritize recovery over throughput: send each failed
+            # frame only after the previous retry is acknowledged, and cap the
+            # intra-frame serial write size to the known-safe 64-byte pacing. This
+            # avoids getting stuck when an aggressive ACK window overruns the
+            # LiteUART RX FIFO and several frames return CRC errors together.
+            if attempt > 0:
+                retry: list[tuple[int, bytes]] = []
+                last_replies = []
+                old_chunk = self.frame_write_chunk
+                if old_chunk == 0 or old_chunk > 64:
+                    self.frame_write_chunk = 64
+                try:
+                    for idx, frame in pending:
+                        self.write_frame(frame)
+                        self.ser.flush()
+                        if frame_delay > 0:
+                            time.sleep(frame_delay)
+                        reply = self.read_ack()
+                        last_replies.append(reply)
+                        if reply == SFL_ACK_SUCCESS:
+                            continue
+                        if reply == SFL_ACK_CRCERROR:
+                            retry.append((idx, frame))
+                            continue
+                        raise RuntimeError(f"Unexpected SFL reply {reply!r}")
+                finally:
+                    self.frame_write_chunk = old_chunk
+
+                if not retry:
+                    return
+                print(f"[SFL] CRC retry: {len(retry)} frame(s), attempt {attempt + 1}/{retries}", flush=True)
+                pending = retry
+                continue
+
+            for frame_idx, (_, frame) in enumerate(pending, 1):
+                self.write_frame(frame)
+                if frame_idx % flush_every == 0:
                     self.ser.flush()
+                if frame_delay > 0:
                     time.sleep(frame_delay)
             self.ser.flush()
 
@@ -275,9 +329,10 @@ class SerialBooter:
         raise RuntimeError(f"Too many CRC errors; last replies={last_replies!r}")
 
     def upload_file(self, path: Path, address: int, chunk_size: int, ack_window: int,
-                    warmup_frames: int = 1, frame_delay: float = 0.0) -> None:
+                    warmup_frames: int = 1, frame_delay: float = 0.0,
+                    flush_every: int = 1) -> None:
         size = path.stat().st_size
-        print(f"[SFL] Uploading {path} to 0x{address:08x} ({size} bytes, ack-window={ack_window}, warmup={warmup_frames}, frame-delay={frame_delay})...", flush=True)
+        print(f"[SFL] Uploading {path} to 0x{address:08x} ({size} bytes, ack-window={ack_window}, warmup={warmup_frames}, frame-delay={frame_delay}, flush-every={flush_every})...", flush=True)
         start = time.monotonic()
         sent = 0
         last_report = start
@@ -307,21 +362,23 @@ class SerialBooter:
                     current += len(chunk)
                     frame_count += 1
                     if frame_count <= warmup_frames:
-                        self.send_encoded_frames([frame])
+                        self.send_encoded_frames([frame], flush_every=1)
                         sent += len(chunk)
                         report()
                         continue
                     pending.append(frame)
                     pending_bytes += len(chunk)
                     if len(pending) >= ack_window:
-                        self.send_encoded_frames(pending, frame_delay=frame_delay)
+                        self.send_encoded_frames(pending, frame_delay=frame_delay,
+                                                 flush_every=flush_every)
                         sent += pending_bytes
                         pending = []
                         pending_bytes = 0
                         report()
 
                 if pending:
-                    self.send_encoded_frames(pending, frame_delay=frame_delay)
+                    self.send_encoded_frames(pending, frame_delay=frame_delay,
+                                             flush_every=flush_every)
                     sent += pending_bytes
                     report(force=True)
         finally:
@@ -390,6 +447,12 @@ def main() -> int:
                         help="send this many initial load frames one-at-a-time")
     parser.add_argument("--frame-delay", type=float, default=0.0,
                         help="delay between frames inside an ACK window")
+    parser.add_argument("--frame-write-chunk", type=int, default=64,
+                        help="maximum bytes per serial write while sending an SFL frame; 0 disables chunking")
+    parser.add_argument("--frame-write-delay", type=float, default=0.0,
+                        help="delay between serial write chunks inside one SFL frame")
+    parser.add_argument("--flush-every", type=int, default=1,
+                        help="flush serial writes every N frames inside an ACK window")
     parser.add_argument("--console-timeout", type=float, default=300.0)
     parser.add_argument("--exit-on", default="buildroot login:")
     parser.add_argument("--log", default=None)
@@ -401,6 +464,12 @@ def main() -> int:
         args.ack_window = 1
     if args.ack_window < 1:
         parser.error("--ack-window must be >= 1")
+    if args.frame_write_chunk < 0:
+        parser.error("--frame-write-chunk must be >= 0")
+    if args.frame_write_delay < 0:
+        parser.error("--frame-write-delay must be >= 0")
+    if args.flush_every < 1:
+        parser.error("--flush-every must be >= 1")
 
     images, jump_address = load_images(Path(args.images))
     print("[SFL] Images:", flush=True)
@@ -411,13 +480,16 @@ def main() -> int:
     booter = SerialBooter(args.port, args.speed, args.log,
                           magic_ack_delay=args.magic_ack_delay,
                           command_delay=args.command_delay,
-                          post_magic_delay=args.post_magic_delay)
+                          post_magic_delay=args.post_magic_delay,
+                          frame_write_chunk=args.frame_write_chunk,
+                          frame_write_delay=args.frame_write_delay)
     try:
         booter.wait_for_serial_loader(args.loader_timeout)
         for path, address in images:
             booter.upload_file(path, address, args.chunk_size, args.ack_window,
                                warmup_frames=args.warmup_frames,
-                               frame_delay=args.frame_delay)
+                               frame_delay=args.frame_delay,
+                               flush_every=args.flush_every)
         booter.jump(jump_address)
         marker = args.exit_on.encode() if args.exit_on else None
         ok = booter.console_until(marker, args.console_timeout)

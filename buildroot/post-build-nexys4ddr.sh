@@ -44,7 +44,6 @@ else
   echo "post-build-nexys4ddr: added ttyLXU0 getty for serial control"
 fi
 
-
 ROOT_DIR=$(cd "$(dirname "$0")/.." && pwd)
 HOST_DIR=${HOST_DIR:-}
 CC=${CC:-}

@@ -103,32 +103,26 @@ For a live dynamic check, run a short watcher and flip switches / press buttons:
 # prints CHANGE switches=0x.... buttons=0x.. when values change
 ```
 
-### RGB LED and seven-segment status (verified)
+### RGB LED status (verified)
 
-The local LiteX target wrapper also exposes the two Nexys4 DDR RGB LEDs and the
-seven-segment display pins as simple LiteX `GPIOOut` banks. These are deliberately
-plain GPIO controllers for the first milestone; PWM/color mixing and a richer
-display driver can be layered on later.
+The local LiteX target wrapper exposes the two Nexys4 DDR RGB LEDs as a simple
+LiteX `GPIOOut` bank. These are deliberately plain GPIO controllers for the first
+milestone; PWM/color mixing can be layered on later.
 
-The new CSR locations are pinned after the previously verified GPIO inputs so the
+The CSR location is pinned after the previously verified GPIO inputs so the
 Ethernet, LED, SPI-SD, switch, and button addresses remain stable:
 
 ```text
-rgb_leds:       CSR 0xf0006000, 6 output lines
-seven_seg:      CSR 0xf0006800, 8 output lines
-seven_seg_ctrl: CSR 0xf0007000, 8 output lines
+rgb_leds: CSR 0xf0006000, 6 output lines
 ```
 
-Linux exposes the three new banks as GPIO character devices in the current
-SD-root boot:
+Linux exposes it as a GPIO character device in the current SD-root boot:
 
 ```text
 /dev/gpiochip3  litex_gpio  6 lines  rgb_leds
-/dev/gpiochip4  litex_gpio  8 lines  seven_seg segments
-/dev/gpiochip5  litex_gpio  8 lines  seven_seg digit enables
 ```
 
-RGB line order in the first GPIO bank is:
+RGB line order is:
 
 ```text
 bit 0: RGB LED0 red
@@ -139,22 +133,7 @@ bit 4: RGB LED1 green
 bit 5: RGB LED1 blue
 ```
 
-The seven-segment digit-enable pins on Nexys4 DDR are active-low. The hardware
-reset value for `seven_seg_ctrl` is `0xff` so all digits stay off until Linux
-drives them. To show a pattern, write the segment mask first through
-`/dev/gpiochip4`, then drive one digit-enable bit low through `/dev/gpiochip5`.
-
-A small GPIO character-UAPI helper is kept in `tools/gpio_output_set.c`; build it
-for the Buildroot RISC-V userspace and copy it to the board when `gpioset` is not
-available in the running SD-root image:
-
-```bash
-third_party/buildroot/output/host/bin/riscv32-buildroot-linux-gnu-gcc.br_real \
-  -O2 -Wall -Wextra -o build/test-tools/gpio_output_set tools/gpio_output_set.c
-```
-
-Hardware smoke test over SSH passed with the new display GPIO bitstream and
-SD-root DTB:
+Hardware smoke test over SSH passed with the display bitstream and SD-root DTB:
 
 ```text
 GPIO_CHIP path=/dev/gpiochip3 name=gpiochip3 label=litex_gpio lines=6
@@ -163,16 +142,45 @@ GPIO_OUTPUT_SET_OK
 ...
 GPIO_OUTPUT_SET path=/dev/gpiochip3 lines=6 mask=0x20 hold_ms=2000
 GPIO_OUTPUT_SET_OK
+```
 
-GPIO_CHIP path=/dev/gpiochip4 name=gpiochip4 label=litex_gpio lines=8
-GPIO_OUTPUT_SET path=/dev/gpiochip4 lines=8 mask=0x3f hold_ms=300
-GPIO_OUTPUT_SET_OK
-GPIO_CHIP path=/dev/gpiochip5 name=gpiochip5 label=litex_gpio lines=8
-GPIO_OUTPUT_SET path=/dev/gpiochip5 lines=8 mask=0xfe hold_ms=1000
-GPIO_OUTPUT_SET_OK
-...
-GPIO_OUTPUT_SET path=/dev/gpiochip5 lines=8 mask=0xff hold_ms=500
-GPIO_OUTPUT_SET_OK
+### Seven-segment status (hardware-scanned)
+
+An earlier milestone exposed the seven-segment display as two `GPIOOut` banks
+(`/dev/gpiochip4` segments and `/dev/gpiochip5` digit enables) scanned from
+userspace. That design made the visual refresh depend on Linux scheduling and
+GPIO ioctl jitter, so it has been replaced by a fabric controller.
+
+`SevenSegScanner` is a single LiteX register block at `0xf0006800`, exposed to
+Linux as one custom-compatible node rather than a gpiochip:
+
+```text
+compatible = "litex,seven-seg-scanner"
+reg        = <0xf0006800 0x28>          # 0x28 = 10 registers
+
++0x00  control    bit0 enable, bit1 segment active-low, bit2 reverse digit
+                  order, bits 8..31 scan divider
++0x04  digit0..7  one segment byte per cell (8 registers through +0x20)
++0x24  status     current scan index / physical digit line (read-only)
+```
+
+The scanner performs the active-low digit multiplexing at a fixed rate, so the
+display no longer flickers under userspace load. The userspace path today is
+`tools/sevenseg_temp_display.c`, which maps the CSR window directly through
+`/dev/mem` (the same register offsets the hardware was verified against); a
+proper kernel driver can be layered on later, using the scanner node added here.
+
+Note the device tree and `csr.json` are checked for agreement by
+`tools/check_csr_dts_consistency.py` (run automatically by the build/probe
+scripts), so the scanner node cannot silently regress to the old GPIO form.
+
+`tools/gpio_output_set.c` remains a general GPIO character-UAPI helper for the
+`rgb_leds` (and older LED/switch) banks; build it for the Buildroot RISC-V
+userspace when `gpioset` is not available in the running SD-root image:
+
+```bash
+third_party/buildroot/output/host/bin/riscv32-buildroot-linux-gnu-gcc.br_real \
+  -O2 -Wall -Wextra -o build/test-tools/gpio_output_set tools/gpio_output_set.c
 ```
 
 ### Seven-segment temperature display status (verified)
@@ -422,11 +430,83 @@ The current build is text-only (no X11/Wayland/SDL/Qt). This milestone realizes
 size penalty of a full GUI stack. The framebuffer console (`fbcon`) drives the VGA
 monitor directly. A minimal GUI can be layered on later if needed.
 
-**Next display milestone:**
+### USB-HID / PS/2 keyboard path (implementation in progress)
 
-Add USB (PS/2) keyboard input so the user can log in locally at the VGA prompt.
-On Nexys4 DDR the USB-HID host port is bridged on-board to PS/2 on FPGA pins
-F4(clk)/B2(dat); kernel 6.9 ships `drivers/input/serio/ps2-gpio.c`.
+Nexys4 DDR does not expose a general USB host controller to the FPGA fabric for
+this use case. The board's USB-HID host port is bridged on-board to PS/2-style
+clock/data pins:
+
+```text
+PS/2 clock: F4
+PS/2 data:  B2
+```
+
+The Linux implementation uses a small bidirectional/open-drain-capable GPIO path:
+
+- LiteX opt-in build flag: `LITEX_WITH_PS2_KEYBOARD=1` / target arg
+  `--with-ps2-keyboard`;
+- LiteX resource: upstream `digilent_nexys4ddr` platform `ps2` resource
+  (`clk=F4`, `dat=B2`, `PULLUP True`);
+- CSR bank: `ps2_keyboard` at explicit slot 17, expected base `0xf0008800`;
+- LiteX hardware primitive: `GPIOTristate`, so each line can be high-Z input or
+  driven output;
+- GPIO bit order: bit 0 = clock, bit 1 = data;
+- IRQ: expected LiteX IRQ 6, used by Linux as a gpiolib child IRQ on clock bit 0,
+  falling edge;
+- Linux GPIO driver extension: `gpio-litex` accepts `litex,direction = "inout"`
+  and maps the LiteX tristate `oe/in/out` CSR layout;
+- Linux serio node: `compatible = "ps2-gpio"`, intentionally without
+  `write-enable`; hardware validation showed the Nexys4 DDR USB-HID-to-PS/2
+  bridge did not respond to PS/2 host-to-device commands, while `atkbd` has a
+  receive-only fallback for serio ports without a write callback;
+- Linux keyboard driver: `atkbd`.
+
+The VGA-only Milestone 1 DTB remains available. The PS/2 path uses a separate
+checked-in DTS and image map so the verified display-only boot path is preserved:
+
+```text
+linux/dts/litex_nexys4ddr_vexriscv_smp_sdroot_vga_ps2_640x480_60mhz.dts
+linux/images/litex_vexriscv_smp_sdroot_vga_ps2_640x480_60mhz_images.json
+scripts/prepare_litex_sdroot_vga_ps2_640x480_images.sh
+```
+
+Expected static metadata for the VGA+PS/2 build:
+
+```text
+video_framebuffer CSR:     0xf0007800   (unchanged)
+video_framebuffer_vtg CSR: 0xf0008000   (unchanged)
+ps2_keyboard CSR:          0xf0008800
+ps2_keyboard IRQ:          6
+ps2_keyboard bits:         clk=0, dat=1
+```
+
+Build and boot command sequence:
+
+```bash
+LITEX_WITH_VIDEO_FRAMEBUFFER=1 \
+LITEX_WITH_PS2_KEYBOARD=1 \
+LITEX_VIDEO_TIMING='640x480@60Hz' \
+LITEX_SYS_CLK_FREQ=60e6 \
+  ./scripts/build_litex_nexys4ddr_linux.sh build/litex_nexys4ddr_linux_vga_fb_ps2_640x480_60mhz
+
+./scripts/prepare_litex_sdroot_vga_ps2_640x480_images.sh
+
+./scripts/program_litex_nexys4ddr.sh \
+  build/litex_nexys4ddr_linux_vga_fb_ps2_640x480_60mhz/gateware/digilent_nexys4ddr.bit
+IMAGES=linux/images/litex_vexriscv_smp_sdroot_vga_ps2_640x480_60mhz_images.json \
+  ./scripts/boot_litex_linux_sdroot_serial.sh /dev/ttyUSB1
+```
+
+Acceptance checklist for the hardware smoke test:
+
+```bash
+dmesg | grep -Ei 'ps2|serio|atkbd|input'
+cat /proc/bus/input/devices
+ls -l /dev/input/event*
+```
+
+Then plug a simple wired USB keyboard into the Nexys4 DDR USB-HID host port and
+type at the VGA `litex-sdroot login:` prompt.
 
 Avoid complex GPU/display acceleration in the first pass.
 

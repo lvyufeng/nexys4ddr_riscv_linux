@@ -34,6 +34,9 @@ fi
   --post-magic-delay "${LITEX_POST_MAGIC_DELAY:-0.05}" \
   --warmup-frames "${LITEX_SFL_WARMUP_FRAMES:-1}" \
   --frame-delay "${LITEX_SFL_FRAME_DELAY:-0}" \
+  --frame-write-chunk "${LITEX_SFL_FRAME_WRITE_CHUNK:-64}" \
+  --frame-write-delay "${LITEX_SFL_FRAME_WRITE_DELAY:-0}" \
+  --flush-every "${LITEX_SFL_FLUSH_EVERY:-1}" \
   --console-timeout "${LITEX_CONSOLE_TIMEOUT:-600}" \
   --exit-on "${LITEX_EXIT_ON:-buildroot login:}" \
   --log "${LITEX_BOOT_TRANSCRIPT:-/tmp/boot_litex_linux_serial.log}" \
