@@ -1,0 +1,338 @@
+--- /dev/null	2026-06-04 11:17:03.284054338 +0000
++++ b/drivers/input/serio/litex_ps2.c	2026-06-06 09:20:00.000000000 +0000
+@@ -0,0 +1,304 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * LiteX PS/2 keyboard controller serio driver.
++ *
++ * The LiteX gateware samples PS/2 clock/data in fabric and queues complete
++ * bytes in a small RX FIFO. Optional open-drain host-command CSRs implement
++ * serio->write() so the standard Linux libps2/atkbd stack owns reset, probe,
++ * activation, LEDs and repeat-rate command sequencing.
++ */
++
++#include <linux/interrupt.h>
++#include <linux/io.h>
++#include <linux/iopoll.h>
++#include <linux/litex.h>
++#include <linux/module.h>
++#include <linux/mutex.h>
++#include <linux/of.h>
++#include <linux/platform_device.h>
++#include <linux/property.h>
++#include <linux/serio.h>
++#include <linux/slab.h>
++
++#define DRV_NAME "litex-ps2"
++
++#define LITEX_PS2_DATA_OFFSET		0x00
++#define LITEX_PS2_STATUS_OFFSET		0x04
++#define LITEX_PS2_CTRL_OFFSET		0x08
++#define LITEX_PS2_EV_STATUS_OFFSET	0x0c
++#define LITEX_PS2_EV_PENDING_OFFSET	0x10
++#define LITEX_PS2_EV_ENABLE_OFFSET	0x14
++#define LITEX_PS2_TX_DATA_OFFSET		0x20
++#define LITEX_PS2_TX_STATUS_OFFSET	0x24
++#define LITEX_PS2_HOST_CTRL_OFFSET	0x28
++
++#define LITEX_PS2_STATUS_RX_READY	BIT(0)
++#define LITEX_PS2_STATUS_OVERFLOW	BIT(2)
++#define LITEX_PS2_STATUS_FRAME_ERROR	BIT(3)
++#define LITEX_PS2_STATUS_PARITY_ERROR	BIT(4)
++
++#define LITEX_PS2_CTRL_CLEAR_ERRORS	BIT(0)
++#define LITEX_PS2_EV_RX_READY		BIT(0)
++
++#define LITEX_PS2_TX_BUSY		BIT(0)
++#define LITEX_PS2_TX_READY		BIT(1)
++#define LITEX_PS2_TX_ACK_SEEN		BIT(2)
++#define LITEX_PS2_TX_TIMEOUT		BIT(3)
++#define LITEX_PS2_TX_BUS_ERROR		BIT(4)
++#define LITEX_PS2_TX_SUPPORTED		BIT(5)
++
++#define LITEX_PS2_HOST_CLEAR_TX		BIT(0)
++#define LITEX_PS2_HOST_FORCE_RELEASE	BIT(3)
++
++#define LITEX_PS2_RET_ACK		0xfa
++#define LITEX_PS2_CMD_RESET_BAT		0xff
++
++#define LITEX_PS2_TX_READY_WAIT_US	25000
++#define LITEX_PS2_TX_BYTE_WAIT_US	250000
++#define LITEX_PS2_TX_RESET_WAIT_US	1000000
++#define LITEX_PS2_RX_DRAIN_LIMIT		64
++
++struct litex_ps2 {
++	struct serio *serio;
++	void __iomem *base;
++	struct mutex tx_lock;
++	bool tx_supported;
++	bool host_init;
++};
++
++static inline u32 litex_ps2_read(struct litex_ps2 *ps2, unsigned int offset)
++{
++	return litex_read32(ps2->base + offset);
++}
++
++static inline void litex_ps2_write(struct litex_ps2 *ps2, unsigned int offset,
++				   u32 val)
++{
++	litex_write32(ps2->base + offset, val);
++}
++
++static int litex_ps2_wait_tx_ready(struct litex_ps2 *ps2)
++{
++	u32 status;
++
++	return read_poll_timeout(litex_ps2_read, status,
++				 status & LITEX_PS2_TX_READY,
++				 50, LITEX_PS2_TX_READY_WAIT_US, false, ps2,
++				 LITEX_PS2_TX_STATUS_OFFSET);
++}
++
++static int litex_ps2_wait_tx_done(struct litex_ps2 *ps2,
++					  unsigned int timeout_us)
++{
++	u32 status;
++
++	return read_poll_timeout(litex_ps2_read, status,
++				 !(status & LITEX_PS2_TX_BUSY),
++				 50, timeout_us, false, ps2,
++				 LITEX_PS2_TX_STATUS_OFFSET);
++}
++
++static int litex_ps2_write_byte(struct serio *serio, unsigned char byte)
++{
++	struct litex_ps2 *ps2 = serio->port_data;
++	unsigned int timeout_us;
++	u32 status;
++	int ret;
++
++	if (!ps2->tx_supported)
++		return -EOPNOTSUPP;
++
++	timeout_us = byte == LITEX_PS2_CMD_RESET_BAT ?
++		     LITEX_PS2_TX_RESET_WAIT_US : LITEX_PS2_TX_BYTE_WAIT_US;
++
++	mutex_lock(&ps2->tx_lock);
++
++	ret = litex_ps2_wait_tx_ready(ps2);
++	if (ret)
++		goto out_release;
++
++	litex_ps2_write(ps2, LITEX_PS2_HOST_CTRL_OFFSET,
++			LITEX_PS2_HOST_CLEAR_TX);
++	litex_ps2_write(ps2, LITEX_PS2_TX_DATA_OFFSET, byte);
++
++	ret = litex_ps2_wait_tx_done(ps2, timeout_us);
++	status = litex_ps2_read(ps2, LITEX_PS2_TX_STATUS_OFFSET);
++	if (ret || !(status & LITEX_PS2_TX_ACK_SEEN) ||
++	    (status & (LITEX_PS2_TX_TIMEOUT | LITEX_PS2_TX_BUS_ERROR))) {
++		dev_dbg(&serio->dev,
++			"failed to write %#02x: ret=%d status=0x%08x\n",
++			byte, ret, status);
++		if (!ret)
++			ret = -ETIMEDOUT;
++		goto out_release;
++	}
++
++	/*
++	 * The fabric TX state machine consumes the device ACK electrically and
++	 * suppresses the RX decoder while tx_busy is asserted. libps2 still
++	 * expects command ACKs to arrive through the serio receive path.
++	 */
++	serio_interrupt(serio, LITEX_PS2_RET_ACK, 0);
++	ret = 0;
++
++out_unlock:
++	mutex_unlock(&ps2->tx_lock);
++	return ret;
++
++out_release:
++	litex_ps2_write(ps2, LITEX_PS2_HOST_CTRL_OFFSET,
++			LITEX_PS2_HOST_FORCE_RELEASE | LITEX_PS2_HOST_CLEAR_TX);
++	goto out_unlock;
++}
++
++static void litex_ps2_drain_rx(struct litex_ps2 *ps2)
++{
++	u32 status;
++	unsigned int count = 0;
++
++	while ((status = litex_ps2_read(ps2, LITEX_PS2_STATUS_OFFSET)) &
++	       LITEX_PS2_STATUS_RX_READY) {
++		serio_interrupt(ps2->serio,
++				litex_ps2_read(ps2, LITEX_PS2_DATA_OFFSET) & 0xff,
++				0);
++		if (++count >= LITEX_PS2_RX_DRAIN_LIMIT)
++			break;
++	}
++
++	status = litex_ps2_read(ps2, LITEX_PS2_STATUS_OFFSET);
++	if (status & (LITEX_PS2_STATUS_OVERFLOW |
++		      LITEX_PS2_STATUS_FRAME_ERROR |
++		      LITEX_PS2_STATUS_PARITY_ERROR)) {
++		dev_warn_ratelimited(&ps2->serio->dev,
++			"status error flags: 0x%08x\n", status);
++		litex_ps2_write(ps2, LITEX_PS2_CTRL_OFFSET,
++				LITEX_PS2_CTRL_CLEAR_ERRORS);
++	}
++}
++
++static irqreturn_t litex_ps2_irq(int irq, void *dev_id)
++{
++	struct litex_ps2 *ps2 = dev_id;
++
++	litex_ps2_drain_rx(ps2);
++	litex_ps2_write(ps2, LITEX_PS2_EV_PENDING_OFFSET, LITEX_PS2_EV_RX_READY);
++
++	return IRQ_HANDLED;
++}
++
++static int litex_ps2_open(struct serio *serio)
++{
++	struct litex_ps2 *ps2 = serio->port_data;
++
++	litex_ps2_write(ps2, LITEX_PS2_CTRL_OFFSET, LITEX_PS2_CTRL_CLEAR_ERRORS);
++	if (ps2->tx_supported)
++		litex_ps2_write(ps2, LITEX_PS2_HOST_CTRL_OFFSET,
++				LITEX_PS2_HOST_FORCE_RELEASE | LITEX_PS2_HOST_CLEAR_TX);
++	litex_ps2_write(ps2, LITEX_PS2_EV_PENDING_OFFSET, LITEX_PS2_EV_RX_READY);
++	litex_ps2_write(ps2, LITEX_PS2_EV_ENABLE_OFFSET, LITEX_PS2_EV_RX_READY);
++
++	litex_ps2_drain_rx(ps2);
++
++	return 0;
++}
++
++static void litex_ps2_close(struct serio *serio)
++{
++	struct litex_ps2 *ps2 = serio->port_data;
++
++	litex_ps2_write(ps2, LITEX_PS2_EV_ENABLE_OFFSET, 0);
++	litex_ps2_write(ps2, LITEX_PS2_EV_PENDING_OFFSET, LITEX_PS2_EV_RX_READY);
++	if (ps2->tx_supported)
++		litex_ps2_write(ps2, LITEX_PS2_HOST_CTRL_OFFSET,
++				LITEX_PS2_HOST_FORCE_RELEASE | LITEX_PS2_HOST_CLEAR_TX);
++}
++
++static int litex_ps2_probe(struct platform_device *pdev)
++{
++	struct litex_ps2 *ps2;
++	struct serio *serio;
++	u32 tx_status;
++	int error, irq;
++
++	ps2 = devm_kzalloc(&pdev->dev, sizeof(*ps2), GFP_KERNEL);
++	if (!ps2)
++		return -ENOMEM;
++
++	mutex_init(&ps2->tx_lock);
++
++	ps2->base = devm_platform_ioremap_resource(pdev, 0);
++	if (IS_ERR(ps2->base))
++		return PTR_ERR(ps2->base);
++
++	irq = platform_get_irq(pdev, 0);
++	if (irq < 0)
++		return irq;
++
++	serio = kzalloc(sizeof(*serio), GFP_KERNEL);
++	if (!serio)
++		return -ENOMEM;
++
++	serio->id.type = SERIO_8042;
++	serio->open = litex_ps2_open;
++	serio->close = litex_ps2_close;
++	strscpy(serio->name, "LiteX PS/2 Keyboard", sizeof(serio->name));
++	strscpy(serio->phys, dev_name(&pdev->dev), sizeof(serio->phys));
++	serio->port_data = ps2;
++	serio->dev.parent = &pdev->dev;
++	ps2->serio = serio;
++	ps2->host_init = device_property_read_bool(&pdev->dev, "litex,host-init");
++	if (device_property_read_bool(&pdev->dev, "litex,tx-supported")) {
++		tx_status = litex_ps2_read(ps2, LITEX_PS2_TX_STATUS_OFFSET);
++		ps2->tx_supported = tx_status & LITEX_PS2_TX_SUPPORTED;
++	}
++	if (ps2->tx_supported)
++		serio->write = litex_ps2_write_byte;
++	else
++		ps2->host_init = false;
++
++	error = devm_request_irq(&pdev->dev, irq, litex_ps2_irq, 0,
++				 pdev->name, ps2);
++	if (error) {
++		dev_err(&pdev->dev, "could not request IRQ %d\n", irq);
++		kfree(serio);
++		return error;
++	}
++
++	dev_info(&pdev->dev,
++		 "base %p, irq %d, tx %s, write %s, host-init %s\n",
++		 ps2->base, irq, ps2->tx_supported ? "yes" : "no",
++		 serio->write ? "yes" : "no", ps2->host_init ? "yes" : "no");
++
++	serio_register_port(serio);
++	platform_set_drvdata(pdev, ps2);
++
++	return 0;
++}
++
++static void litex_ps2_remove(struct platform_device *pdev)
++{
++	struct litex_ps2 *ps2 = platform_get_drvdata(pdev);
++
++	serio_unregister_port(ps2->serio);
++}
++
++static const struct of_device_id litex_ps2_match[] = {
++	{ .compatible = "litex,ps2-keyboard" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, litex_ps2_match);
++
++static struct platform_driver litex_ps2_driver = {
++	.probe = litex_ps2_probe,
++	.remove_new = litex_ps2_remove,
++	.driver = {
++		.name = DRV_NAME,
++		.of_match_table = litex_ps2_match,
++	},
++};
++module_platform_driver(litex_ps2_driver);
++
++MODULE_DESCRIPTION("LiteX PS/2 keyboard serio driver");
++MODULE_AUTHOR("Claude <noreply@anthropic.com>");
++MODULE_LICENSE("GPL");
++MODULE_ALIAS("platform:" DRV_NAME);
+--- a/drivers/input/serio/Kconfig	2024-05-12 21:12:29.000000000 +0000
++++ b/drivers/input/serio/Kconfig	2026-06-05 01:02:03.011229235 +0000
+@@ -220,6 +220,18 @@
+ 	  To compile this driver as a module, choose M here: the
+ 	  module will be called altera_ps2.
+ 
++config SERIO_LITEX_PS2
++	tristate "LiteX PS/2 keyboard controller"
++	depends on OF && HAS_IOMEM
++	help
++	  Say Y here if your LiteX SoC exposes a PS/2 keyboard controller.
++	  The hardware decodes PS/2 clock/data frames into RX bytes and, when
++	  host-command CSRs are present, provides a serio write path for
++	  libps2/atkbd reset, probe, activation, LED and repeat-rate commands.
++
++	  To compile this driver as a module, choose M here: the
++	  module will be called litex_ps2.
++
+ config SERIO_AMS_DELTA
+ 	tristate "Amstrad Delta (E3) mailboard support"
+ 	depends on MACH_AMS_DELTA
+--- a/drivers/input/serio/Makefile	2024-05-12 21:12:29.000000000 +0000
++++ b/drivers/input/serio/Makefile	2026-06-05 01:02:03.011229235 +0000
+@@ -26,6 +26,7 @@
+ obj-$(CONFIG_SERIO_AMS_DELTA)	+= ams_delta_serio.o
+ obj-$(CONFIG_SERIO_XILINX_XPS_PS2)	+= xilinx_ps2.o
+ obj-$(CONFIG_SERIO_ALTERA_PS2)	+= altera_ps2.o
++obj-$(CONFIG_SERIO_LITEX_PS2)	+= litex_ps2.o
+ obj-$(CONFIG_SERIO_ARC_PS2)	+= arc_ps2.o
+ obj-$(CONFIG_SERIO_APBPS2)	+= apbps2.o
+ obj-$(CONFIG_SERIO_OLPC_APSP)	+= olpc_apsp.o

@@ -1,0 +1,26 @@
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
+From: lvyufeng <lvyufeng@users.noreply.github.com>
+Date: Thu, 4 Jun 2026 19:08:00 +0000
+Subject: [PATCH] Input: ps2-gpio: avoid RESEND without write-enable
+
+When ps2-gpio is used without the write-enable property, serio->write is
+not exposed and atkbd uses its receive-only fallback. In that mode the
+PS/2 host must not try to send commands on RX errors: the board may only
+provide a receive-only HID-to-PS/2 bridge, and attempting RESEND can leave
+open-drain GPIOs in a transmit-timeout state.
+
+Only request RESEND on RX errors when write_enable is set.
+---
+diff --git a/drivers/input/serio/ps2-gpio.c b/drivers/input/serio/ps2-gpio.c
+--- a/drivers/input/serio/ps2-gpio.c
++++ b/drivers/input/serio/ps2-gpio.c
+@@ -260,7 +260,8 @@ static irqreturn_t ps2_gpio_irq_rx(struct ps2_gpio_data *drvdata)
+
+ err:
+ 	cnt = byte = 0;
+-	__ps2_gpio_write(drvdata->serio, PS2_CMD_RESEND);
++	if (drvdata->write_enable)
++		__ps2_gpio_write(drvdata->serio, PS2_CMD_RESEND);
+ end:
+ 	drvdata->rx.cnt = cnt;
+ 	drvdata->rx.byte = byte;
