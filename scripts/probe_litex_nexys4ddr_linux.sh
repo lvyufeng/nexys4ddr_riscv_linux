@@ -55,13 +55,22 @@ if [ "${LITEX_WITH_SEVEN_SEG:-1}" = "1" ]; then
   EXTRA_LITEX_ARGS+=(--with-seven-seg)
 fi
 
-# Temperature display sources: FPGA die temperature via XADC/SysMon and the
+# Temperature display sources: FPGA die temperature via XADC/hwmon and the
 # Nexys4 DDR board temperature sensor pins via a LiteX bit-banged I2C master.
 if [ "${LITEX_WITH_XADC:-0}" = "1" ]; then
   EXTRA_LITEX_ARGS+=(--with-xadc)
 fi
 if [ "${LITEX_WITH_TEMP_I2C:-0}" = "1" ]; then
   EXTRA_LITEX_ARGS+=(--with-temp-i2c)
+fi
+
+# Expose the Nexys4 DDR USB-HID host port through its board-level PS/2 bridge.
+# Keep this opt-in so existing VGA-only builds and CSR contracts stay stable.
+if [ "${LITEX_WITH_PS2_KEYBOARD:-0}" = "1" ]; then
+  EXTRA_LITEX_ARGS+=(--with-ps2-keyboard)
+  if [ "${LITEX_WITH_PS2_SELFTEST:-0}" = "1" ]; then
+    EXTRA_LITEX_ARGS+=(--with-ps2-selftest)
+  fi
 fi
 
 # VGA is resource/timing heavier than simple GPIO, so keep it opt-in per build.
@@ -107,59 +116,19 @@ python3 third_party/litex/litex/tools/litex_json2dts_linux.py \
 # Patch GPIO metadata that litex_json2dts cannot infer: the LedChaser/switch GPIO
 # node counts default to 4, and local GPIO banks that lack upstream DTS emitters
 # are inserted from their generated CSR bases.
-PATCH_ARGS=(
-  --leds-ngpio "${LITEX_LEDS_NGPIO:-16}"
-  --switches-ngpio "${LITEX_SWITCHES_NGPIO:-16}"
-  --buttons-ngpio "${LITEX_BUTTONS_NGPIO:-5}"
-  --rgb-leds-ngpio "${LITEX_RGB_LEDS_NGPIO:-6}"
-)
-GPIO_META=$(python3 - "$OUT_DIR/csr.json" <<'PY'
-import json, sys
-d = json.load(open(sys.argv[1]))
-bases = d.get("csr_bases", {})
-constants = d.get("constants", {})
-for name in ["buttons", "rgb_leds", "seven_seg", "seven_seg_ctrl", "xadc", "temp_i2c"]:
-    base = bases.get(name)
-    print(f"{name}_base=0x{base:x}" if base is not None else f"{name}_base=")
-print(f"buttons_interrupt={constants.get('buttons_interrupt', '')}")
-print(f"seven_seg_ngpio={constants.get('seven_seg_ngpio', '')}")
-print(f"seven_seg_ctrl_ngpio={constants.get('seven_seg_ctrl_ngpio', '')}")
-print(f"seven_seg_hardware_scanner={constants.get('seven_seg_hardware_scanner', '')}")
-PY
-)
-eval "$GPIO_META"
-if [ -n "$buttons_base" ]; then
-  PATCH_ARGS+=(--buttons-base "$buttons_base")
+PATCH_ARGS=()
+mapfile -t PATCH_ARGS < <(python3 tools/dts_patch_args.py "$OUT_DIR/csr.json")
+if [ "${#PATCH_ARGS[@]}" -eq 0 ]; then
+  echo "dts_patch_args.py produced no arguments for $OUT_DIR/csr.json" >&2
+  exit 1
 fi
-if [ -n "$buttons_interrupt" ]; then
-  PATCH_ARGS+=(--buttons-interrupt "$buttons_interrupt")
-fi
-if [ -n "$rgb_leds_base" ]; then
-  PATCH_ARGS+=(--rgb-leds-base "$rgb_leds_base")
-fi
-if [ -n "${seven_seg_ngpio:-}" ]; then
-  PATCH_ARGS+=(--seven-seg-ngpio "$seven_seg_ngpio")
-else
-  PATCH_ARGS+=(--seven-seg-ngpio "${LITEX_SEVEN_SEG_NGPIO:-8}")
-fi
-if [ -n "${seven_seg_ctrl_ngpio:-}" ]; then
-  PATCH_ARGS+=(--seven-seg-ctrl-ngpio "$seven_seg_ctrl_ngpio")
-else
-  PATCH_ARGS+=(--seven-seg-ctrl-ngpio "${LITEX_SEVEN_SEG_CTRL_NGPIO:-8}")
-fi
-if [ -n "$seven_seg_base" ]; then
-  PATCH_ARGS+=(--seven-seg-base "$seven_seg_base")
-fi
-if [ -n "$seven_seg_ctrl_base" ]; then
-  PATCH_ARGS+=(--seven-seg-ctrl-base "$seven_seg_ctrl_base")
-fi
-if [ -n "$xadc_base" ]; then
-  PATCH_ARGS+=(--xadc-base "$xadc_base")
-fi
-if [ -n "$temp_i2c_base" ]; then
-  PATCH_ARGS+=(--temp-i2c-base "$temp_i2c_base")
-fi
+
 python3 tools/patch_litex_nexys4ddr_dts.py "$OUT_DIR/digilent_nexys4ddr_linux.dts" "${PATCH_ARGS[@]}"
+
+# Fail loudly if the generated DTS and the CSR map disagree, rather than shipping
+# a DTB whose peripheral addresses or node forms do not match the bitstream.
+python3 tools/check_csr_dts_consistency.py \
+  "$OUT_DIR/csr.json" "$OUT_DIR/digilent_nexys4ddr_linux.dts"
 
 printf '\nLiteX Nexys4 DDR Linux metadata probe written to %s\n' "$OUT_DIR"
 find "$OUT_DIR" -maxdepth 2 -type f \( -name 'csr.json' -o -name 'csr.csv' -o -name 'memory.x' -o -name '*.dts' \) | sort

@@ -20,57 +20,31 @@ def patch_ref_ngpio(text: str, ref: str, ngpio: int) -> tuple[str, bool]:
     return text, bool(count)
 
 
-def insert_buttons_node(text: str, buttons_base: int, buttons_interrupt: int | None) -> tuple[str, bool]:
-    if "buttons: gpio@" in text:
-        return text, False
-    interrupt_line = ""
-    if buttons_interrupt is not None:
-        interrupt_line = f"\n                interrupts = <{buttons_interrupt}>;"
-    node = f'''
-            buttons: gpio@{buttons_base:x} {{
-                compatible = "litex,gpio";
-                reg = <0x{buttons_base:x} 0x4>;
-                gpio-controller;
-                #gpio-cells = <2>;
-                litex,direction = "in";{interrupt_line}
-                status = "disabled";
-            }};
-'''
-    marker = "\n        };\n\n        aliases {"
-    if marker not in text:
-        raise SystemExit("failed to locate /soc closing marker for buttons node insertion")
-    return text.replace(marker, node + marker, 1), True
-
-
-def append_buttons_ref(text: str, ngpio: int) -> tuple[str, bool]:
-    if "&buttons" in text:
-        return text, False
-    block = f'''
-&buttons {{
-        litex,ngpio = <{ngpio}>;
-        status = "okay";
-}};
-'''
-    return text.rstrip() + "\n" + block, True
-
-
 def insert_gpio_node(
     text: str,
     name: str,
     base: int,
     direction: str,
     *,
+    interrupt: int | None = None,
+    interrupt_controller: bool = False,
     reg_size: int = 0x4,
 ) -> tuple[str, bool]:
     if f"{name}: gpio@" in text:
         return text, False
+    irq_provider = ""
+    if interrupt_controller:
+        irq_provider = "\n                interrupt-controller;\n                #interrupt-cells = <2>;\n                #address-cells = <0>;"
+    interrupt_line = ""
+    if interrupt is not None:
+        interrupt_line = f"\n                interrupts = <{interrupt}>;"
     node = f"""
             {name}: gpio@{base:x} {{
                 compatible = "litex,gpio";
                 reg = <0x{base:x} 0x{reg_size:x}>;
                 gpio-controller;
-                #gpio-cells = <2>;
-                litex,direction = "{direction}";
+                #gpio-cells = <2>;{irq_provider}
+                litex,direction = "{direction}";{interrupt_line}
                 status = "disabled";
             }};
 """
@@ -83,12 +57,12 @@ def insert_gpio_node(
 def append_gpio_ref(text: str, name: str, ngpio: int) -> tuple[str, bool]:
     if f"&{name}" in text:
         return text, False
-    block = f'''
+    block = f"""
 &{name} {{
         litex,ngpio = <{ngpio}>;
         status = "okay";
 }};
-'''
+"""
     return text.rstrip() + "\n" + block, True
 
 
@@ -135,6 +109,53 @@ def insert_i2c_node(text: str, name: str, base: int) -> tuple[str, bool]:
     return text.replace(marker, node + marker, 1), True
 
 
+def insert_ps2_keyboard_node(text: str, base: int, interrupt: int | None) -> tuple[str, bool]:
+    if "ps2_keyboard: ps2@" in text or 'compatible = "litex,ps2-keyboard"' in text:
+        return text, False
+    interrupt_line = ""
+    if interrupt is not None:
+        interrupt_line = f"\n                interrupts = <{interrupt}>;"
+    # The LiteX PS/2 keyboard block samples receive frames in fabric and exposes
+    # complete Set-2 bytes through a FIFO to a Linux serio driver. Newer gateware
+    # also appends open-drain host command/status CSRs for PS/2 reset/enable
+    # scanning, so reserve the full 0x40-byte register window.
+    node = f"""
+            ps2_keyboard: ps2@{base:x} {{
+                compatible = "litex,ps2-keyboard";
+                reg = <0x{base:x} 0x40>;{interrupt_line}
+                litex,tx-supported;
+                litex,host-init;
+                status = "okay";
+            }};
+"""
+    marker = "\n        };\n\n        aliases {"
+    if marker not in text:
+        raise SystemExit("failed to locate /soc closing marker for ps2 keyboard insertion")
+    return text.replace(marker, node + marker, 1), True
+
+
+def insert_seven_seg_scanner_node(text: str, base: int, window: int) -> tuple[str, bool]:
+    """Insert the hardware-scanned seven-segment register block node.
+
+    The current target feeds the display from a `SevenSegScanner` CSR block
+    (control + eight digit masks + status) rather than two `GPIOOut` banks, so it
+    is exposed as a single custom-compatible register window instead of a gpiochip.
+    """
+    if "seven_seg: seven-seg@" in text or 'compatible = "litex,seven-seg-scanner"' in text:
+        return text, False
+    node = f"""
+            seven_seg: seven-seg@{base:x} {{
+                compatible = "litex,seven-seg-scanner";
+                reg = <0x{base:x} 0x{window:x}>;
+                status = "okay";
+            }};
+"""
+    marker = "\n        };\n\n        aliases {"
+    if marker not in text:
+        raise SystemExit("failed to locate /soc closing marker for seven_seg scanner insertion")
+    return text.replace(marker, node + marker, 1), True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("dts", type=Path)
@@ -149,6 +170,20 @@ def main() -> int:
     parser.add_argument("--seven-seg-base", type=lambda x: int(x, 0))
     parser.add_argument("--seven-seg-ctrl-ngpio", type=int, default=8)
     parser.add_argument("--seven-seg-ctrl-base", type=lambda x: int(x, 0))
+    parser.add_argument(
+        "--seven-seg-scanner",
+        action="store_true",
+        help="Emit a litex,seven-seg-scanner node instead of GPIO banks.",
+    )
+    parser.add_argument(
+        "--seven-seg-window",
+        type=lambda x: int(x, 0),
+        default=0x28,
+        help="Register window size for the scanner node.",
+    )
+    parser.add_argument("--ps2-keyboard-ngpio", type=int, default=2)
+    parser.add_argument("--ps2-keyboard-base", type=lambda x: int(x, 0))
+    parser.add_argument("--ps2-keyboard-interrupt", type=int)
     parser.add_argument("--xadc-base", type=lambda x: int(x, 0))
     parser.add_argument("--temp-i2c-base", type=lambda x: int(x, 0))
     args = parser.parse_args()
@@ -165,17 +200,17 @@ def main() -> int:
             print(f"Patched &switches litex,ngpio = <{args.switches_ngpio}>")
 
     if args.buttons_base is not None:
-        text, inserted = insert_buttons_node(text, args.buttons_base, args.buttons_interrupt)
+        text, inserted = insert_gpio_node(
+            text, "buttons", args.buttons_base, "in", interrupt=args.buttons_interrupt
+        )
         if inserted:
             print(f"Inserted buttons GPIO node at 0x{args.buttons_base:x}")
-        text, appended = append_buttons_ref(text, args.buttons_ngpio)
+        text, appended = append_gpio_ref(text, "buttons", args.buttons_ngpio)
         if appended:
             print(f"Appended &buttons litex,ngpio = <{args.buttons_ngpio}>")
 
     extra_outputs = [
         ("rgb_leds", args.rgb_leds_base, args.rgb_leds_ngpio),
-        ("seven_seg", args.seven_seg_base, args.seven_seg_ngpio),
-        ("seven_seg_ctrl", args.seven_seg_ctrl_base, args.seven_seg_ctrl_ngpio),
     ]
     for name, base, ngpio in extra_outputs:
         if base is None or ngpio <= 0:
@@ -186,6 +221,41 @@ def main() -> int:
         text, appended = append_gpio_ref(text, name, ngpio)
         if appended:
             print(f"Appended &{name} litex,ngpio = <{ngpio}>")
+
+    # The seven-segment display has two mutually exclusive hardware contracts:
+    # a single SevenSegScanner register window, or the legacy pair of GPIOOut
+    # banks. dts_patch_args.py discriminates by the generated core type and sets
+    # exactly one of these paths; the ngpio<=0 guard still suppresses any bank
+    # whose count is zero so a stale constant cannot emit a bogus gpiochip.
+    if args.seven_seg_scanner:
+        if args.seven_seg_base is not None:
+            text, inserted = insert_seven_seg_scanner_node(
+                text, args.seven_seg_base, args.seven_seg_window)
+            if inserted:
+                print(f"Inserted seven_seg scanner node at 0x{args.seven_seg_base:x} "
+                      f"(window 0x{args.seven_seg_window:x})")
+    else:
+        for name, base, ngpio in (
+            ("seven_seg", args.seven_seg_base, args.seven_seg_ngpio),
+            ("seven_seg_ctrl", args.seven_seg_ctrl_base, args.seven_seg_ctrl_ngpio),
+        ):
+            if base is None or ngpio <= 0:
+                continue
+            text, inserted = insert_gpio_node(text, name, base, "out")
+            if inserted:
+                print(f"Inserted {name} GPIO node at 0x{base:x}")
+            text, appended = append_gpio_ref(text, name, ngpio)
+            if appended:
+                print(f"Appended &{name} litex,ngpio = <{ngpio}>")
+
+    if args.ps2_keyboard_base is not None:
+        text, inserted = insert_ps2_keyboard_node(
+            text,
+            args.ps2_keyboard_base,
+            args.ps2_keyboard_interrupt,
+        )
+        if inserted:
+            print(f"Inserted ps2_keyboard RX node at 0x{args.ps2_keyboard_base:x}")
 
     if args.xadc_base is not None:
         text, inserted = insert_xadc_node(text, args.xadc_base)

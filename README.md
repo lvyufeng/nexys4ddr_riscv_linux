@@ -211,22 +211,19 @@ The 16 user LEDs appear as `/dev/gpiochip0` (`litex_gpio`, 16 output lines) and
 a chaser plus `0xffff`/`0xaaaa`/`0x5555` patterns drove all 16 LEDs
 successfully. The 16 user switches and 5 push buttons are enabled as Linux GPIO
 input controllers (`/dev/gpiochip1` and `/dev/gpiochip2`) and verified from the
-SD-root shell with a GPIO character UAPI smoke test. The two RGB LEDs and
-seven-segment display are also enabled as simple GPIO output controllers:
+SD-root shell with a GPIO character UAPI smoke test. The two RGB LEDs are enabled
+as a simple GPIO output controller:
 
 ```text
 /dev/gpiochip3  rgb_leds        6 output lines
-/dev/gpiochip4  seven_seg       8 output lines
-/dev/gpiochip5  seven_seg_ctrl  8 output lines, active-low digit enables
 ```
 
-A later temperature-display build replaces the seven-segment GPIO banks with a
-hardware scanner CSR at `0xf0006800`, adds FPGA XADC and board temperature-sensor
-I2C CSRs, and installs `/usr/bin/sevenseg_temp_display` to show the FPGA die and
-ambient temperatures as two 4-digit groups.
-
-The RGB LED channels and seven-segment digit scan were verified over SSH with a
-GPIO character-UAPI helper. See [`docs/peripherals.md`](docs/peripherals.md).
+The seven-segment display is no longer a gpiochip. It is driven by a fabric
+`SevenSegScanner` (single register block at `0xf0006800`) that performs the
+active-low digit multiplexing in hardware, so refresh does not depend on Linux
+scheduling. Its device-tree node is `compatible = "litex,seven-seg-scanner"`; the
+userspace path today is `tools/sevenseg_temp_display.c`, which maps the CSR window
+directly. See [`docs/peripherals.md`](docs/peripherals.md).
 
 A conservative VGA framebuffer build is now hardware-verified at
 `640x480@60Hz`. The local LiteX target keeps video opt-in and allows the timing
@@ -283,7 +280,36 @@ default getty stay on serial as the control path. Hardware verification confirme
 dmesg lines, the `litex-vga: enabling 640x480@60Hz scanout... OK` boot message, an
 advancing DMA offset register, and a `litex-sdroot login:` prompt reachable over
 serial. See [`docs/peripherals.md`](docs/peripherals.md) for the full acceptance
-log. Local keyboard input (USB/PS/2 on pins F4/B2) is the next display milestone.
+log.
+
+USB keyboard input on Nexys4 DDR is implemented through the board's USB-HID-to-PS/2
+bridge on FPGA pins F4/B2. The Linux path uses `ps2-gpio`: LiteX exposes a 2-bit IRQ-capable tristate
+GPIO bank at CSR `0xf0008800` (bit 0 clock, bit 1 data), and Linux uses
+`ps2-gpio` plus `atkbd` in receive-only mode. Hardware validation showed the
+bridge did not respond to PS/2 host-to-device commands, while atkbd has a
+receive-only fallback for serio ports without `write-enable`. This keeps the verified VGA
+DMA/VTG CSRs unchanged and preserves the VGA-only boot path by using a separate
+VGA+PS/2 DTB/image map:
+
+```bash
+LITEX_WITH_VIDEO_FRAMEBUFFER=1 \
+LITEX_WITH_PS2_KEYBOARD=1 \
+LITEX_VIDEO_TIMING='640x480@60Hz' \
+LITEX_SYS_CLK_FREQ=60e6 \
+  ./scripts/build_litex_nexys4ddr_linux.sh build/litex_nexys4ddr_linux_vga_fb_ps2_640x480_60mhz
+
+./scripts/prepare_litex_sdroot_vga_ps2_640x480_images.sh
+
+./scripts/program_litex_nexys4ddr.sh \
+  build/litex_nexys4ddr_linux_vga_fb_ps2_640x480_60mhz/gateware/digilent_nexys4ddr.bit
+IMAGES=linux/images/litex_vexriscv_smp_sdroot_vga_ps2_640x480_60mhz_images.json \
+  ./scripts/boot_litex_linux_sdroot_serial.sh /dev/ttyUSB1
+```
+
+Verify from serial with `dmesg | grep -Ei 'ps2|serio|atkbd|input'`,
+`cat /proc/bus/input/devices`, and `/dev/input/event*`, then type at the VGA
+`litex-sdroot login:` prompt with a wired USB keyboard plugged into the Nexys4 DDR
+USB-HID host port.
 
 ## Relationship to `step_into_mips`
 

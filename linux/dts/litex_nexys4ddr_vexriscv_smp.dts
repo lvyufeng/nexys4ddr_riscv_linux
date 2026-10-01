@@ -194,22 +194,10 @@
                 status = "disabled";
             };
 
-            seven_seg: gpio@f0006800 {
-                compatible = "litex,gpio";
-                reg = <0xf0006800 0x4>;
-                gpio-controller;
-                #gpio-cells = <2>;
-                litex,direction = "out";
-                status = "disabled";
-            };
-
-            seven_seg_ctrl: gpio@f0007000 {
-                compatible = "litex,gpio";
-                reg = <0xf0007000 0x4>;
-                gpio-controller;
-                #gpio-cells = <2>;
-                litex,direction = "out";
-                status = "disabled";
+            seven_seg: seven-seg@f0006800 {
+                compatible = "litex,seven-seg-scanner";
+                reg = <0xf0006800 0x28>;
+                status = "okay";
             };
 
         };
@@ -241,15 +229,5 @@
 
 &rgb_leds {
         litex,ngpio = <6>;
-        status = "okay";
-};
-
-&seven_seg {
-        litex,ngpio = <8>;
-        status = "okay";
-};
-
-&seven_seg_ctrl {
-        litex,ngpio = <8>;
         status = "okay";
 };
